@@ -166,6 +166,9 @@ def riesgo(ev: Evaluacion, ctx: Contexto, extremos: dict | None = None) -> list[
                 "RAW / ETc (simulado) + turnos declarados")
 
     ext = extremos or {}
+    if extremos is not None and not ext.get("anios"):
+        add("Exceso de lluvia (potencial)", "por determinar",
+            ext.get("motivo_exceso", "sin campañas completas en el registro"), "registro de lluvia")
     if ext.get("anios"):
         n = ext["anios"]
         fuente_ll = (f"{ext['fuente_lluvia']}; umbral = aguacero de 5 días que se da 1 vez "
@@ -185,6 +188,9 @@ def riesgo(ev: Evaluacion, ctx: Contexto, extremos: dict | None = None) -> list[
                 f"en {ext['anios_exceso']} de {n} años la lluvia máxima en 5 días de la campaña superó "
                 f"{ext['umbral_rx5day_mm']:.0f} mm (peor año {peor['anio']}: {peor['rx5day_mm']:.0f} mm); "
                 f"sensibilidad del cultivo: {ext['sensibilidad_anegamiento']}. {nota}".strip(),
+                fuente_ll)
+        elif ext.get("nivel_exceso") == "por determinar":
+            add("Exceso de lluvia (potencial)", "por determinar", ext.get("motivo_exceso", "sin umbral"),
                 fuente_ll)
         if ext.get("frecuencia_calor") is not None:
             peor = ext["peor_anio_calor"]

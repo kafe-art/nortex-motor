@@ -63,3 +63,12 @@ def test_sin_ventana_de_floracion():
     out = rc.evaluar("limon_sutil", "2021-01-01", _clima())
     assert out["nivel_calor"] == "por determinar"
     assert out["ventana_floracion"] == "sin dato de floración"
+
+
+def test_historial_corto_queda_por_determinar():
+    # Con 3 años no hay umbral: no puede salir «bajo» con 0 % (hallazgo de la revisión del equipo)
+    clima = _clima(anios=range(2018, 2021), aguacero=[2019])
+    out = rc.evaluar("caupi", "2021-01-20", clima)
+    assert out["umbral_rx5day_mm"] is None
+    assert out["nivel_exceso"] == "por determinar" and out["frecuencia_exceso"] is None
+    assert "historial insuficiente" in out["motivo_exceso"]

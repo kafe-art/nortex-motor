@@ -157,3 +157,10 @@ def test_f2_compara_cultivos(ctx):
     assert "RT-04" in tabla.loc["arroz", "reglas"]
     # Con la misma dotación, el caupí (menor demanda) cubre más que el maíz
     assert tabla.loc["caupi", "cobertura_deficit_medio"] > tabla.loc["maiz", "cobertura_deficit_medio"]
+
+
+def test_historial_corto_no_da_riesgo_bajo(clima_sintetico):
+    corto = preparar(clima_sintetico.loc["2018":"2020"], fecha_consulta=HOY)
+    d = decidir(corto, "caupi", "2021-01-20", dotacion_m3_ha=6000)
+    exceso = next(r for r in d.riesgo if r["factor"] == "Exceso de lluvia (potencial)")
+    assert exceso["nivel"] == "por determinar"

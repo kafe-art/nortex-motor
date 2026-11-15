@@ -31,6 +31,7 @@ from nortex_motor.catalogo import cultivo as get_cultivo
 
 PERIODO_RETORNO_ANIOS = 5      # umbral = aguacero de 5 días que se da 1 vez cada 5 años
 MIN_ANIOS_IMERG = 15
+MIN_ANIOS_UMBRAL = 5            # años completos mínimos para estimar el umbral de lluvia
 MIN_DIAS_CALOR = 3              # días con Tmax > umbral en floración para contar el año
 #: Frecuencia de años con exceso → nivel, según sensibilidad: (corte medio, corte alto).
 CORTES_EXCESO = {"alta": (0.05, 0.15), "media": (0.10, 0.20), "baja": (0.15, 0.30)}
@@ -43,7 +44,7 @@ def umbral_lluvia(precip: pd.Series) -> float | None:
     suma5 = precip.rolling(5).sum()
     anios = suma5.groupby(suma5.index.year).agg(["max", "count"])
     maximos = anios.loc[anios["count"] >= 330, "max"].dropna()  # solo años casi completos
-    if len(maximos) < 5:
+    if len(maximos) < MIN_ANIOS_UMBRAL:
         return None
     return float(np.percentile(maximos, 100 * (1 - 1 / PERIODO_RETORNO_ANIOS)))
 
@@ -109,16 +110,23 @@ def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | No
            "umbral_calor_c": umbral_calor, "detalle": detalle}
     if detalle.empty:
         out.update(frecuencia_exceso=None, nivel_exceso="por determinar",
+                   motivo_exceso="sin campañas completas en el registro",
                    frecuencia_calor=None, nivel_calor="por determinar")
         return out
 
-    n_exceso = int(detalle["exceso"].sum())
-    out["frecuencia_exceso"] = n_exceso / len(detalle)
-    out["anios_exceso"] = n_exceso
     peor = detalle["rx5day_mm"].idxmax()
     out["peor_anio_lluvia"] = {"anio": int(peor), "rx5day_mm": float(detalle.loc[peor, "rx5day_mm"])}
-    sens = c.get("sensibilidad_anegamiento") or "media"
-    out["nivel_exceso"] = _nivel(out["frecuencia_exceso"], CORTES_EXCESO[sens])
+    if umbral is None:
+        # Sin ≥ MIN_ANIOS_UMBRAL años completos no hay umbral: una frecuencia de 0 % sería falsa.
+        out.update(frecuencia_exceso=None, anios_exceso=None, nivel_exceso="por determinar",
+                   motivo_exceso=f"historial insuficiente: se necesitan ≥ {MIN_ANIOS_UMBRAL} años "
+                                 "completos de lluvia para el umbral")
+    else:
+        n_exceso = int(detalle["exceso"].sum())
+        out["frecuencia_exceso"] = n_exceso / len(detalle)
+        out["anios_exceso"] = n_exceso
+        sens = c.get("sensibilidad_anegamiento") or "media"
+        out["nivel_exceso"] = _nivel(out["frecuencia_exceso"], CORTES_EXCESO[sens])
 
     calor = detalle["dias_calor_floracion"]
     if calor.isna().all():
