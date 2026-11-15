@@ -150,7 +150,8 @@ def test_pipeline_usa_la_mejor_fuente_disponible(clima_sintetico):
     assert ev.riego.dotacion_m3_ha == 4500 and ev.riego.intervalo_dias == 12
     assert "PCR declarado" in ev.procedencia["dotacion"]
     assert "corregido con prueba" in ev.procedencia["clima"]
-    assert ev.validacion["corregido"] and set(ev.resultados) == {"favorable", "medio", "desfavorable"}
+    assert ev.validacion["corregido"]
+    assert set(ev.resultados) == {"deficit_bajo", "deficit_medio", "deficit_alto"}
     assert ev.hindcast["anios_probados"] > 0
     assert ev.resumen.loc["cobertura_hidrica"].notna().all()
 

@@ -68,11 +68,11 @@ def test_conveniencia_con_ky_y_sin_datos(ctx):
     eco = {"caupi": {"rendimiento_t_ha": 1.5, "precio_soles_kg": 4.0, "costo_soles_ha": 3000}}
     con_poca = decidir(ctx, "caupi", "2021-06-01", eco, dotacion_m3_ha=1500)
     con_mucha = decidir(ctx, "caupi", "2021-06-01", eco, dotacion_m3_ha=20_000)
-    m_poca = con_poca.conveniencia["margen_soles_ha"]["medio"]
-    m_mucha = con_mucha.conveniencia["margen_soles_ha"]["medio"]
+    m_poca = con_poca.conveniencia["margen_soles_ha"]["deficit_medio"]
+    m_mucha = con_mucha.conveniencia["margen_soles_ha"]["deficit_medio"]
     assert m_mucha == pytest.approx(1.5 * 1000 * 4.0 - 3000, rel=0.05)  # casi sin estrés
     assert m_poca < m_mucha  # el estrés reduce el rendimiento (Ky 1,15)
-    assert con_poca.conveniencia["rendimiento_relativo"]["medio"] < 1
+    assert con_poca.conveniencia["rendimiento_relativo"]["deficit_medio"] < 1
 
 
 def test_fundamentacion(ctx, clima_sintetico):
@@ -100,16 +100,52 @@ def test_f1_ordena_ventanas(ctx):
     assert orden.is_monotonic_increasing
 
 
+def _codigos(reglas):
+    return {r["regla"]: r for r in reglas}
+
+
 def test_transiciones_y_reglas(ctx):
     assert tipo_transicion("arroz", "arroz") == "continuidad"
     assert tipo_transicion("arroz", "caupi") == "cambio"
     assert tipo_transicion("arroz", "mango") == "transición"
     assert tipo_transicion("mango", "caupi") == "renovación"
-    reglas = reglas_transicion(ctx, ["arroz", "arroz"], "mango")
-    assert any(r.startswith("RT-02") for r in reglas) and any(r.startswith("RT-05") for r in reglas)
-    assert any("napa" in r for r in reglas)
-    assert any(r.startswith("RT-04") for r in reglas_transicion(ctx, ["arroz", "arroz"], "arroz"))
-    assert any(r.startswith("RT-01") for r in reglas_transicion(ctx, ["limon_sutil"], "caupi"))
+    reglas = _codigos(reglas_transicion(ctx, ["arroz", "arroz"], "mango"))
+    assert reglas["RT-02"]["tipo"] == "informativa" and reglas["RT-02"]["efecto"] is None
+    assert reglas["RT-05"]["tipo"] == "condicionante" and "napa" in reglas["RT-05"]["texto"]
+    rt04 = _codigos(reglas_transicion(ctx, ["arroz", "arroz"], "arroz"))["RT-04"]
+    assert rt04["tipo"] == "informativa" and rt04["efecto"] is None  # v0.7: RT-04 solo avisa
+    rt01 = _codigos(reglas_transicion(ctx, ["limon_sutil"], "caupi"))["RT-01"]
+    assert rt01["tipo"] == "condicionante" and rt01["efecto"] == "por determinar"
+    confirmada = _codigos(reglas_transicion(ctx, ["limon_sutil"], "caupi", renovacion_confirmada=True))
+    assert confirmada["RT-01"]["efecto"] is None
+
+
+def test_reglas_cambian_la_viabilidad(ctx):
+    # RT-01 condicionante: sin renovación confirmada, el cambio desde un huerto queda por determinar
+    sin = decidir(ctx, "caupi", "2021-06-01", historial=["limon_sutil"], dotacion_m3_ha=20_000)
+    con = decidir(ctx, "caupi", "2021-06-01", historial=["limon_sutil"], renovacion_confirmada=True,
+                  dotacion_m3_ha=20_000)
+    assert sin.viabilidad["estado"] == "por determinar"
+    assert any(m.startswith("RT-01") for m in sin.viabilidad["motivos"])
+    assert con.viabilidad["estado"] == "viable"
+    # RT-04 informativa: no cambia la viabilidad del arroz
+    base = decidir(ctx, "arroz", "2021-01-01", dotacion_m3_ha=30_000)
+    repetido = decidir(ctx, "arroz", "2021-01-01", historial=["arroz", "arroz"], dotacion_m3_ha=30_000)
+    assert repetido.viabilidad["estado"] == base.viabilidad["estado"]
+
+
+def test_riesgo_exceso_y_clima_por_escenario(ctx):
+    d = decidir(ctx, "caupi", "2021-01-15", dotacion_m3_ha=6000)
+    factores = {r["factor"]: r for r in d.riesgo}
+    exceso = factores["Exceso de lluvia (potencial)"]
+    assert "de 20 años" in exceso["evidencia"] and "peor año" in exceso["evidencia"]
+    assert "no confirmado" in exceso["evidencia"]  # sin napa ni pendiente
+    assert "Calor en floración" in factores
+    assert [c["escenario"] for c in d.clima_escenarios] == ["deficit_bajo", "deficit_medio", "deficit_alto"]
+    assert all(c["rx5day_mm"] is not None for c in d.clima_escenarios)
+    assert d.extremos["anios"] == 20 and "detalle" not in d.extremos
+    texto = json.dumps(d.a_dict(), default=str)
+    assert "no si es bueno o malo" in texto
 
 
 def test_f2_compara_cultivos(ctx):
@@ -120,4 +156,4 @@ def test_f2_compara_cultivos(ctx):
     assert tabla.loc["arroz", "transicion"] == "continuidad"
     assert "RT-04" in tabla.loc["arroz", "reglas"]
     # Con la misma dotación, el caupí (menor demanda) cubre más que el maíz
-    assert tabla.loc["caupi", "cobertura_medio"] > tabla.loc["maiz", "cobertura_medio"]
+    assert tabla.loc["caupi", "cobertura_deficit_medio"] > tabla.loc["maiz", "cobertura_deficit_medio"]

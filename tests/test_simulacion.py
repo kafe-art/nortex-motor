@@ -17,7 +17,7 @@ def test_escenarios_eligen_anios_analogos(clima_sintetico):
     tabla = esc.ventanas_historicas(clima_sintetico, "06-01", 80)
     assert len(tabla) == 20
     e = esc.seleccionar(tabla, "deficit")
-    assert [x.nombre for x in e] == ["favorable", "medio", "desfavorable"]
+    assert [x.nombre for x in e] == ["deficit_bajo", "deficit_medio", "deficit_alto"]
     # el déficit crece con el año: P10 → años tempranos, P90 → años tardíos
     assert e[0].anio_analogo < e[1].anio_analogo < e[2].anio_analogo
     assert esc.robustez(tabla) == "normal"
@@ -96,9 +96,9 @@ def test_salinidad_maas_hoffman(clima_sintetico):
 def test_simular_escenarios_y_resumen(clima_sintetico):
     out = simular_escenarios("caupi", "2027-06-01", FRANCO,
                              Riego(intervalo_dias=10, dotacion_m3_ha=3500), clima_sintetico)
-    assert set(out["resultados"]) == {"favorable", "medio", "desfavorable"}
+    assert set(out["resultados"]) == {"deficit_bajo", "deficit_medio", "deficit_alto"}
     tabla = resumen(out["resultados"])
-    assert tabla.loc["et0_total", "favorable"] < tabla.loc["et0_total", "desfavorable"]
+    assert tabla.loc["et0_total", "deficit_bajo"] < tabla.loc["et0_total", "deficit_alto"]
     assert all(r.valores["clima"].categoria == "escenario" for r in out["resultados"].values())
 
 

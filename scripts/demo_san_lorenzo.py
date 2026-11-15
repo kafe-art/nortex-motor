@@ -36,7 +36,7 @@ def main(ruta: str) -> None:
         for e in out["escenarios"]:
             print("  ", e.etiqueta, f"= {e.valor_percentil:.0f} mm")
         print(resumen(out["resultados"]).to_string(), "\n")
-        medio = out["resultados"]["medio"]
+        medio = out["resultados"]["deficit_medio"]
         for a in medio.advertencias:
             print("  ⚠", a)
         print()

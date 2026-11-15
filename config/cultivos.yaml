@@ -26,6 +26,8 @@ cultivos:
       zr_m:         {valor: 0.5, fuente: FAO56-T22, estado: POR_VALIDAR}
       p:            {valor: 0.20, fuente: FAO56-T22, estado: POR_VALIDAR}
       ky:           {valor: null, fuente: "no aplica: cultivo anegado (demanda + pérdidas)", estado: POR_VALIDAR}
+      floracion_dias: {valor: [80, 100], fuente: "lit (espigado y antesis en ciclo de 150 d)", estado: POR_VALIDAR}
+      sensibilidad_anegamiento: {valor: baja, fuente: "lit (cultivo de poza)", estado: POR_VALIDAR}
       perdidas_mm_dia: {valor: 4.0, fuente: "lit (percolación y filtración en poza)", estado: POR_VALIDAR}
       tbase_c:      {valor: 10.0, fuente: lit, estado: POR_VALIDAR}
       tupper_c:     {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
@@ -46,6 +48,8 @@ cultivos:
       zr_m:         {valor: 0.7, fuente: "FAO56-T22 (frijol seco 0,6–0,9)", estado: POR_VALIDAR}
       p:            {valor: 0.45, fuente: FAO56-T22, estado: POR_VALIDAR}
       ky:           {valor: 1.15, fuente: "FAO33 (frijol, ciclo completo)", estado: POR_VALIDAR}
+      floracion_dias: {valor: [35, 55], fuente: "lit (caupí de ciclo 70–90 d)", estado: POR_VALIDAR}
+      sensibilidad_anegamiento: {valor: alta, fuente: "lit (leguminosa de grano)", estado: POR_VALIDAR}
       tbase_c:      {valor: 10.0, fuente: lit, estado: POR_VALIDAR}
       tupper_c:     {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
       calor_floracion_c: {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
@@ -65,6 +69,8 @@ cultivos:
       zr_m:         {valor: 1.0, fuente: "FAO56-T22 (1,0–1,7)", estado: POR_VALIDAR}
       p:            {valor: 0.55, fuente: FAO56-T22, estado: POR_VALIDAR}
       ky:           {valor: 1.25, fuente: "FAO33 (maíz, ciclo completo)", estado: POR_VALIDAR}
+      floracion_dias: {valor: [60, 75], fuente: "lit (panojamiento y emisión de estigmas, ciclo 110–140 d)", estado: POR_VALIDAR}
+      sensibilidad_anegamiento: {valor: alta, fuente: "lit", estado: POR_VALIDAR}
       tbase_c:      {valor: 10.0, fuente: "lit (método 86/50)", estado: POR_VALIDAR}
       tupper_c:     {valor: 30.0, fuente: "lit (método 86/50)", estado: POR_VALIDAR}
       calor_floracion_c: {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
@@ -81,6 +87,9 @@ cultivos:
       zr_m:         {valor: 1.5, fuente: "v07 (1,5–2,0)", estado: POR_VALIDAR}
       p:            {valor: 0.50, fuente: "lit (frutales)", estado: POR_VALIDAR}
       ky:           {valor: null, fuente: "sin dato para mango", estado: POR_VALIDAR}
+      floracion_meses: {valor: [7, 8, 9], fuente: "lit (floración de julio a septiembre en Piura)", estado: POR_VALIDAR}
+      sensibilidad_anegamiento: {valor: media, fuente: "lit", estado: POR_VALIDAR}
+      calor_floracion_c: {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
       ece_umbral:   {valor: 1.5, fuente: "v07 (1,5–2,0)", estado: POR_VALIDAR}
       ece_pendiente: {valor: null, fuente: "sin dato", estado: POR_VALIDAR}
       noches_frescas_umbral_c: {valor: 16.0, fuente: "v07 §9.6 (15–17 °C)", estado: POR_VALIDAR}
@@ -97,6 +106,8 @@ cultivos:
       zr_m:         {valor: 1.2, fuente: "FAO56-T22 (cítricos 1,2–1,5)", estado: POR_VALIDAR}
       p:            {valor: 0.50, fuente: FAO56-T22, estado: POR_VALIDAR}
       ky:           {valor: null, fuente: "sin dato para C. aurantiifolia", estado: POR_VALIDAR}
+      floracion_meses: {valor: null, fuente: "sin dato: floraciones dependientes del manejo del riego", estado: POR_VALIDAR}
+      sensibilidad_anegamiento: {valor: alta, fuente: "lit (Phytophthora, asfixia radicular)", estado: POR_VALIDAR}
       ece_umbral:   {valor: 1.5, fuente: "v07 (1,5–1,7)", estado: POR_VALIDAR}
       ece_pendiente: {valor: null, fuente: "sin dato para C. aurantiifolia", estado: POR_VALIDAR}
       periodo_juvenil_anios: {valor: [3, 4], fuente: v07, estado: POR_VALIDAR}

@@ -2,10 +2,14 @@
 
 Procedimiento:
 1. Para cada año histórico se toma la misma ventana de la campaña (fecha de inicio y duración).
-2. Se calcula una métrica por ventana. Por defecto el **déficit climático** Σ(ET0 − P) (mm):
+2. Se calcula una métrica por ventana. Por defecto el **déficit climático** Σ(ET0 − P) (mm)
+   entre la siembra y el fin del ciclo:
    en un valle regado la lluvia es casi nula y la demanda atmosférica es lo que varía; con la
    precipitación sola los percentiles quedan degenerados (EX-13). La métrica es configurable.
-3. Se toman los percentiles 10, 50 y 90 y el **año análogo** más cercano a cada uno.
+3. Se toman los percentiles 10, 50 y 90 y el **año análogo** más cercano a cada uno. Se nombran
+   por el clima que describen (``deficit_bajo``, ``deficit_medio``, ``deficit_alto``), **no** como
+   favorable o desfavorable: un año de poco déficit puede traer exceso de lluvia (El Niño) y ser
+   malo para un cultivo sensible al anegamiento. La conveniencia se evalúa después, por cultivo.
 4. El escenario es la serie diaria real del año análogo, re-fechada a la campaña futura.
 
 Lo que NO se hace: no se asigna probabilidad, no se presenta como pronóstico y no se
@@ -23,6 +27,20 @@ from nortex_motor.clima import validar
 
 MIN_ANIOS_ROBUSTO = 15  # EX-06: con menos años se degrada la confianza
 PERCENTILES = (10, 50, 90)
+#: Qué mide cada métrica, para las etiquetas.
+DESCRIPCION_METRICA = {
+    "deficit": "déficit climático Σ(ET0 − lluvia) entre la siembra y el fin del ciclo",
+    "precip": "lluvia acumulada entre la siembra y el fin del ciclo",
+    "et0": "ET0 acumulada entre la siembra y el fin del ciclo",
+    "tmax_media": "Tmax media entre la siembra y el fin del ciclo",
+}
+#: Nombres por percentil: describen el clima, no la conveniencia para el cultivo.
+NOMBRES = {
+    "deficit": {10: "deficit_bajo", 50: "deficit_medio", 90: "deficit_alto"},
+    "precip": {10: "lluvia_baja", 50: "lluvia_media", 90: "lluvia_alta"},
+    "et0": {10: "et0_baja", 50: "et0_media", 90: "et0_alta"},
+    "tmax_media": {10: "tmax_baja", 50: "tmax_media", 90: "tmax_alta"},
+}
 METRICAS = {
     "deficit": lambda v: float((v["et0"] - v["precip"]).sum()),
     "precip": lambda v: float(v["precip"].sum()),
@@ -44,8 +62,14 @@ class Escenario:
 
     @property
     def etiqueta(self) -> str:
-        return (f"{self.nombre}: percentil {self.percentil} de {self.metrica} "
-                f"(año análogo {self.anio_analogo})")
+        return (f"{self.nombre.replace('_', ' ')}: percentil {self.percentil} de "
+                f"{DESCRIPCION_METRICA.get(self.metrica, self.metrica)} (año análogo {self.anio_analogo})")
+
+    @property
+    def nota(self) -> str:
+        """Aclaración obligatoria en la interfaz (v0.7 §6.2 y §6.7)."""
+        return ("Escenario construido con años históricos: describe el clima, no si es bueno o malo "
+                "para el cultivo; un percentil no es una probabilidad.")
 
 
 def ventanas_historicas(clima: pd.DataFrame, inicio_mm_dd: str, dias: int,
@@ -83,9 +107,7 @@ def seleccionar(tabla: pd.DataFrame, metrica: str = "deficit",
     if metrica not in METRICAS:
         raise KeyError(f"Métrica desconocida {metrica!r}; opciones {sorted(METRICAS)}")
     serie = tabla[metrica]
-    nombres = {10: "favorable", 50: "medio", 90: "desfavorable"}
-    if metrica in {"precip"}:  # más lluvia = más favorable
-        nombres = {10: "seco", 50: "medio", 90: "húmedo"}
+    nombres = NOMBRES[metrica]
     out = []
     for q in percentiles:
         valor = float(np.percentile(serie, q))

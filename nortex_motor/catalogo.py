@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 ESTADOS = {"POR_VALIDAR", "VALIDADO"}
+SENSIBILIDADES = ("baja", "media", "alta")
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,14 @@ def cargar_cultivos() -> dict[str, Cultivo]:
             raise ValueError(f"{cid}: un cultivo anual necesita etapas_dias")
         if tipo == "perenne" and "kc_constante" not in params:
             raise ValueError(f"{cid}: un perenne necesita kc_constante")
+        sens = params.get("sensibilidad_anegamiento")
+        if sens is not None and sens.valor not in SENSIBILIDADES:
+            raise ValueError(f"{cid}: sensibilidad_anegamiento debe ser una de {SENSIBILIDADES}")
+        flor = params.get("floracion_dias")
+        if flor is not None and flor.valor is not None:
+            a, b = flor.valor
+            if not 0 <= a < b <= sum(params["etapas_dias"].valor):
+                raise ValueError(f"{cid}: floracion_dias debe estar dentro del ciclo")
         out[cid] = Cultivo(cid, c["nombre"], c["cientifico"], tipo, bool(c.get("anegado")), params)
     return out
 

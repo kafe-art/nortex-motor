@@ -129,6 +129,8 @@ class Contexto:
     fecha_consulta: pd.Timestamp
     procedencia: dict
     advertencias: list[str]
+    lluvia: pd.Series | None = None      # lluvia diaria de IMERG (para extremos)
+    relieve: pd.DataFrame | None = None  # SRTM: elevation, slope, relief
 
 
 def preparar(
@@ -141,8 +143,14 @@ def preparar(
     enso: pd.DataFrame | None = None,
     reservorios: pd.DataFrame | None = None,
     fecha_consulta: str | pd.Timestamp | None = None,
+    lluvia_datos: pd.DataFrame | None = None,
+    relieve: pd.DataFrame | None = None,
 ) -> Contexto:
-    """Carga el clima, lo valida y corrige con la estación y resume el reservorio."""
+    """Carga el clima, lo valida y corrige con la estación y resume el reservorio.
+
+    ``lluvia_datos`` (IMERG, formato largo) se usa para los extremos de lluvia; ``relieve``
+    (SRTM) para el factor de drenaje del riesgo por exceso de lluvia.
+    """
     fecha_consulta = pd.Timestamp(fecha_consulta or pd.Timestamp.today()).normalize()
     adv: list[str] = []
     proc: dict[str, str] = {}
@@ -167,8 +175,15 @@ def preparar(
             if dias is not None and dias > MAX_ANTIGUEDAD_RESERVORIO:
                 adv.append(f"El último volumen del reservorio es de {estado_res['fecha_dato']} "
                            f"({dias} días): no describe la situación actual (RNF-03).")
+    lluvia = None
+    if lluvia_datos is not None and not lluvia_datos.empty:
+        sel = lluvia_datos[lluvia_datos["variable"].isin(["precipitation", "precip_daily"])]
+        if len(sel):
+            lluvia = sel.set_index(pd.to_datetime(sel["date"]))["value"].sort_index()
+            lluvia = lluvia[~lluvia.index.duplicated(keep="last")]
+            proc["lluvia_extremos"] = "GPM IMERG (0,1°)"
     return Contexto(tabla, validacion, local, suelo_datos, enso, reservorios, estado_res,
-                    fecha_consulta, proc, adv)
+                    fecha_consulta, proc, adv, lluvia, relieve)
 
 
 def evaluar_ctx(
@@ -274,6 +289,8 @@ def evaluar(
     local: pd.DataFrame | None = None,
     enso: pd.DataFrame | None = None,
     reservorios: pd.DataFrame | None = None,
+    lluvia_datos: pd.DataFrame | None = None,
+    relieve: pd.DataFrame | None = None,
     area_ha: float = 1.0,
     intervalo_dias: int | None = None,
     dotacion_m3_ha: float | None = None,
@@ -284,7 +301,8 @@ def evaluar(
 ) -> Evaluacion:
     """Atajo: :func:`preparar` + :func:`evaluar_ctx` para un solo cultivo y fecha."""
     ctx = preparar(clima, estacion=estacion, nombre_estacion=nombre_estacion, suelo_datos=suelo_datos,
-                   local=local, enso=enso, reservorios=reservorios, fecha_consulta=fecha_consulta)
+                   local=local, enso=enso, reservorios=reservorios, fecha_consulta=fecha_consulta,
+                   lluvia_datos=lluvia_datos, relieve=relieve)
     return evaluar_ctx(ctx, cultivo_id, inicio, area_ha=area_ha, intervalo_dias=intervalo_dias,
                        dotacion_m3_ha=dotacion_m3_ha, eficiencia=eficiencia,
                        condicion_enso=condicion_enso, metrica=metrica)

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 import pandas as pd
 
+from nortex_motor import riesgo_climatico
 from nortex_motor.catalogo import cultivo as get_cultivo
 from nortex_motor.pipeline import Contexto, Evaluacion, _ultimo, evaluar_ctx
 from nortex_motor.termico import tmin_media_invierno
@@ -31,7 +32,6 @@ from nortex_motor.termico import tmin_media_invierno
 UMBRALES = {
     "estres_critico_dias": (1, 8),      # días con Ks < 1 en etapa crítica: < 1 bajo, < 8 medio, ≥ 8 alto
     "estres_por_turno_dias": (1, 4),    # días de estrés por turno
-    "calor_floracion_dias": (1, 4),     # días con Tmax > umbral del cultivo en etapa media
     "icen_moderado": 1.0,               # ENFEN: El Niño Costero moderado (POR VERIFICAR)
     "icen_fuerte": 1.7,                 # ENFEN: El Niño Costero fuerte (POR VERIFICAR)
     "anomalia_tmin_mango": 1.0,         # °C sobre la mediana del invierno en años El Niño
@@ -40,7 +40,11 @@ UMBRALES = {
 }
 NIVELES = ("bajo", "medio", "alto")
 ORDEN_VIABILIDAD = {"viable": 0, "viable con restricciones": 1, "por determinar": 2, "no viable": 3}
-SENSIBLES_ANEGAMIENTO = {"caupi", "maiz", "limon_sutil", "mango"}
+#: Claves de los escenarios: describen el clima (déficit), no la conveniencia.
+BAJO, MEDIO, ALTO = "deficit_bajo", "deficit_medio", "deficit_alto"
+UMBRAL_NAPA_M = 1.5           # napa más somera limita frutales y drenaje (POR VALIDAR)
+UMBRAL_PENDIENTE_PLANA = 0.5  # % (SRTM)
+UMBRAL_ARCILLA = 30.0         # % (SoilGrids, 0–30 cm)
 
 
 def _nivel(valor, cortes) -> str:
@@ -66,6 +70,8 @@ class Decision:
     conveniencia: dict
     fundamentacion: dict
     evaluacion: Evaluacion = field(repr=False)
+    clima_escenarios: list[dict] = field(default_factory=list)
+    extremos: dict = field(default_factory=dict)
 
     def a_dict(self) -> dict:
         """Representación serializable para la API web."""
@@ -81,7 +87,9 @@ class Decision:
             "riesgo": self.riesgo,
             "conveniencia": self.conveniencia,
             "fundamentacion": self.fundamentacion,
-            "escenarios": [asdict(e) for e in ev.escenarios],
+            "escenarios": [dict(asdict(e), etiqueta=e.etiqueta, nota=e.nota) for e in ev.escenarios],
+            "clima_escenarios": self.clima_escenarios,
+            "extremos": self.extremos,
             "resultados": escenarios,
             "hindcast": {k: v for k, v in ev.hindcast.items() if k != "detalle"},
             "procedencia": ev.procedencia,
@@ -100,18 +108,18 @@ def viabilidad(ev: Evaluacion, ctx: Contexto) -> dict:
     if area is not None and area[0] <= 0:
         motivos.append(("no viable", "El PCR no autoriza área para este cultivo (RT-08)."))
 
-    c_medio, c_desf = _v(ev, "medio", "cobertura_hidrica"), _v(ev, "desfavorable", "cobertura_hidrica")
+    c_medio, c_desf = _v(ev, MEDIO, "cobertura_hidrica"), _v(ev, ALTO, "cobertura_hidrica")
     if c_medio is None:
         motivos.append(("por determinar", "Cobertura hídrica sin dotación confirmada (EX-04)."))
     elif c_medio < 1:
-        motivos.append(("no viable", f"La dotación cubre el {c_medio:.0%} de la demanda en el escenario "
-                                     "medio (RT-06)."))
+        motivos.append(("no viable", f"La dotación cubre el {c_medio:.0%} de la demanda con déficit "
+                                     "climático medio (P50) (RT-06)."))
     elif c_desf is not None and c_desf < 1:
         motivos.append(("viable con restricciones",
-                        f"Cubre la demanda en el escenario medio, pero solo el {c_desf:.0%} en el "
-                        "desfavorable."))
+                        f"Cubre la demanda con déficit medio (P50), pero solo el {c_desf:.0%} con "
+                        "déficit alto (P90)."))
 
-    sal = ev.resultados["medio"].valores.get("rendimiento_relativo_salinidad")
+    sal = ev.resultados[MEDIO].valores.get("rendimiento_relativo_salinidad")
     if sal is not None and sal.valor is not None:
         if sal.valor < UMBRALES["rend_salino_no_viable"]:
             motivos.append(("no viable",
@@ -134,7 +142,7 @@ def viabilidad(ev: Evaluacion, ctx: Contexto) -> dict:
     return {"estado": estado, "motivos": [m[1] for m in motivos] or ["Sin incompatibilidades detectadas."]}
 
 
-def riesgo(ev: Evaluacion, ctx: Contexto) -> list[dict]:
+def riesgo(ev: Evaluacion, ctx: Contexto, extremos: dict | None = None) -> list[dict]:
     """Factores de riesgo con nivel, evidencia y fuente."""
     c = get_cultivo(ev.cultivo)
     items: list[dict] = []
@@ -143,42 +151,63 @@ def riesgo(ev: Evaluacion, ctx: Contexto) -> list[dict]:
         items.append({"factor": factor, "nivel": nivel, "evidencia": evidencia, "fuente": fuente})
 
     if not c.anegado:
-        criticos = [_v(ev, e, "dias_estres_etapa_critica") for e in ("medio", "desfavorable")]
+        criticos = [_v(ev, e, "dias_estres_etapa_critica") for e in (MEDIO, ALTO)]
         if all(x is not None for x in criticos):
             add("Estrés hídrico en etapa crítica", _nivel(max(criticos), UMBRALES["estres_critico_dias"]),
-                f"{criticos[0]} días con Ks < 1 (medio) y {criticos[1]} (desfavorable)",
+                f"{criticos[0]} días con Ks < 1 con déficit medio (P50) y "
+                f"{criticos[1]} con déficit alto (P90)",
                 "balance FAO-56 (simulado)")
-        turno = _v(ev, "medio", "estres_por_turno")
-        aut = _v(ev, "medio", "autonomia_entre_turnos")
+        turno = _v(ev, MEDIO, "estres_por_turno")
+        aut = _v(ev, MEDIO, "autonomia_entre_turnos")
         if turno is not None:
             add("Turno de riego más largo que la autonomía del suelo",
                 _nivel(turno, UMBRALES["estres_por_turno_dias"]),
                 f"el suelo aguanta {aut:.1f} días; {turno:.1f} días de estrés por turno",
                 "RAW / ETc (simulado) + turnos declarados")
 
-    calor = [_v(ev, e, "dias_calor_etapa_media") for e in ("medio", "desfavorable")]
-    if all(x is not None for x in calor):
-        add("Calor en floración", _nivel(max(calor), UMBRALES["calor_floracion_dias"]),
-            f"hasta {max(calor)} días con Tmax sobre el umbral del cultivo", "clima por escenario")
+    ext = extremos or {}
+    if ext.get("anios"):
+        n = ext["anios"]
+        fuente_ll = (f"{ext['fuente_lluvia']}; umbral = aguacero de 5 días que se da 1 vez "
+                     "cada 5 años en el registro local")
+        if ext.get("frecuencia_exceso") is not None:
+            nivel = ext["nivel_exceso"]
+            factores, falta = _drenaje(ctx)
+            nota = ("Encharcamiento no confirmado: faltan datos de drenaje (napa, pendiente o textura)."
+                    if falta else "")
+            if factores:
+                nivel = NIVELES[min(NIVELES.index(nivel) + 1, 2)] if nivel in NIVELES else nivel
+                nota = "Drenaje desfavorable: " + ", ".join(factores) + "."
+            elif not falta:
+                nota = "Sin limitaciones de drenaje conocidas; encharcamiento poco probable."
+            peor = ext["peor_anio_lluvia"]
+            add("Exceso de lluvia (potencial)", nivel,
+                f"en {ext['anios_exceso']} de {n} años la lluvia máxima en 5 días de la campaña superó "
+                f"{ext['umbral_rx5day_mm']:.0f} mm (peor año {peor['anio']}: {peor['rx5day_mm']:.0f} mm); "
+                f"sensibilidad del cultivo: {ext['sensibilidad_anegamiento']}. {nota}".strip(),
+                fuente_ll)
+        if ext.get("frecuencia_calor") is not None:
+            peor = ext["peor_anio_calor"]
+            add("Calor en floración", ext["nivel_calor"],
+                f"en {ext['anios_calor']} de {n} años hubo ≥ {riesgo_climatico.MIN_DIAS_CALOR} días con "
+                f"Tmax > {ext['umbral_calor_c']:.0f} °C en la floración ({ext['ventana_floracion']}); "
+                f"peor año {peor['anio']}: {peor['dias']} días",
+                "clima corregido + ventana de floración de la ficha del cultivo")
+        elif ext.get("nivel_calor") == "por determinar":
+            add("Calor en floración", "por determinar",
+                f"sin ventana de floración o umbral en la ficha del cultivo ({ext['ventana_floracion']})",
+                "ficha del cultivo")
 
     enso = ev.enso or {}
     if enso.get("icen_ultimo"):
         mes, icen = enso["icen_ultimo"]
-        fechas = ev.resultados["medio"].diario.index
-        if c.id in SENSIBLES_ANEGAMIENTO and fechas.month.isin([1, 2, 3, 4]).any():
+        fechas = ev.resultados[MEDIO].diario.index
+        sensible = c.get("sensibilidad_anegamiento") in {"alta", "media"}
+        if sensible and fechas.month.isin([1, 2, 3, 4]).any():
             nivel = ("alto" if icen >= UMBRALES["icen_fuerte"] else
                      "medio" if icen >= UMBRALES["icen_moderado"] else "bajo")
-            evid = f"ICEN {mes} = {icen:+.2f}"
-            nino = enso.get("anios_nino") or []
-            if nino:
-                clima = ctx.clima
-                ventana = [clima.loc[pd.Timestamp(a, fechas[0].month, min(fechas[0].day, 28)):
-                                     pd.Timestamp(a, fechas[0].month, min(fechas[0].day, 28))
-                                     + pd.Timedelta(days=len(fechas) - 1), "precip"].sum()
-                           for a in nino]
-                evid += (f"; en años El Niño análogos la lluvia de la campaña llegó a "
-                         f"{max(ventana):.0f} mm")
-            add("Lluvias intensas y encharcamiento (El Niño Costero)", nivel, evid,
+            add("El Niño Costero en curso durante la temporada de lluvias", nivel,
+                f"ICEN {mes} = {icen:+.2f}; la campaña incluye enero–abril",
                 "ICEN observado; persistencia por confirmar con el comunicado ENFEN (pronosticado)")
         if c.id == "mango":
             anom = tmin_media_invierno(ctx.clima["tmin"])
@@ -200,6 +229,32 @@ def riesgo(ev: Evaluacion, ctx: Contexto) -> list[dict]:
     return items
 
 
+def _drenaje(ctx: Contexto) -> tuple[list[str], bool]:
+    """Factores que agravan el exceso de lluvia y si falta información de drenaje."""
+    factores, datos = [], 0
+    rel = ctx.relieve
+    if rel is not None and not rel.empty:
+        pend = rel.loc[rel["variable"] == "slope", "value"].dropna()
+        if len(pend):
+            datos += 1
+            if float(pend.iloc[0]) < UMBRAL_PENDIENTE_PLANA:
+                factores.append(f"terreno plano (pendiente {float(pend.iloc[0]):.1f} %, SRTM)")
+    sg = ctx.suelo_datos
+    if sg is not None and not sg.empty:
+        capas = sg["product"].str.contains("0-5cm|5-15cm|15-30cm", na=False)
+        arc = sg.loc[(sg["variable"] == "soil_clay") & capas, "value"].dropna()
+        if len(arc):
+            datos += 1
+            if float(arc.mean()) >= UMBRAL_ARCILLA:
+                factores.append(f"suelo arcilloso ({float(arc.mean()):.0f} % de arcilla, SoilGrids)")
+    napa = _ultimo(ctx.local, "water_table_depth")
+    if napa is not None:
+        datos += 1
+        if napa[0] < UMBRAL_NAPA_M:
+            factores.append(f"napa somera ({napa[0]:.1f} m, declarada)")
+    return factores, datos < 2
+
+
 def conveniencia(ev: Evaluacion, ctx: Contexto, economia: dict | None = None) -> dict:
     """Margen bruto de referencia ajustado por agua (Ky) y salinidad, por ha y por m³."""
     c = get_cultivo(ev.cultivo)
@@ -213,8 +268,8 @@ def conveniencia(ev: Evaluacion, ctx: Contexto, economia: dict | None = None) ->
             datos = {"rendimiento_t_ha": r[0], "precio_soles_kg": p[0], "costo_soles_ha": k[0]}
             fuente = f"declarado: {r[1]}"
     out: dict = {"fuente": fuente if datos else None}
-    agua_m3 = _v(ev, "medio", "riego_bruto")
-    agua_m3 = agua_m3 * 10 if agua_m3 else _v(ev, "medio", "demanda_bruta")
+    agua_m3 = _v(ev, MEDIO, "riego_bruto")
+    agua_m3 = agua_m3 * 10 if agua_m3 else _v(ev, MEDIO, "demanda_bruta")
     out["agua_m3_ha"] = None if agua_m3 is None else round(agua_m3)
     if c.perenne:
         out["nota"] = "Perenne: durante el periodo juvenil el margen de la campaña es ≤ 0 (RT-02)."
@@ -225,7 +280,7 @@ def conveniencia(ev: Evaluacion, ctx: Contexto, economia: dict | None = None) ->
 
     ky = c.get("ky")
     factores = {}
-    for esc in ("favorable", "medio", "desfavorable"):
+    for esc in (BAJO, MEDIO, ALTO):
         etc, eta = _v(ev, esc, "etc_total"), _v(ev, esc, "eta_total")
         f_agua = max(0.0, 1 - ky * (1 - eta / etc)) if ky and etc and eta is not None else 1.0
         sal = _v(ev, esc, "rendimiento_relativo_salinidad")
@@ -240,7 +295,7 @@ def conveniencia(ev: Evaluacion, ctx: Contexto, economia: dict | None = None) ->
         rendimiento_referencia_t_ha=datos["rendimiento_t_ha"],
         rendimiento_relativo={k: round(v, 3) for k, v in factores.items()},
         margen_soles_ha={k: round(v) for k, v in margen.items()},
-        margen_soles_m3=(None if not agua_m3 else round(margen["medio"] / agua_m3, 2)),
+        margen_soles_m3=(None if not agua_m3 else round(margen[MEDIO] / agua_m3, 2)),
         metodo=("rend. ref. × mín(1 − Ky·(1 − ETa/ETc), rend. relativo por salinidad) × precio − costo"
                 + ("" if ky else "; sin Ky: no se ajusta por estrés hídrico")),
     )
@@ -281,12 +336,19 @@ def fundamentacion(ev: Evaluacion, conv: dict) -> dict:
             "faltantes": [faltantes[k] for k, v in insumos.items() if v != "buena"]}
 
 
-def decidir(ctx: Contexto, cultivo_id: str, inicio, economia: dict | None = None, **kw) -> Decision:
+def decidir(ctx: Contexto, cultivo_id: str, inicio, economia: dict | None = None,
+            historial: list[str] | None = None, renovacion_confirmada: bool = False, **kw) -> Decision:
     """Evalúa un cultivo en una ventana y devuelve las cuatro dimensiones."""
     ev = evaluar_ctx(ctx, cultivo_id, inicio, **kw)
+    ext = riesgo_climatico.evaluar(cultivo_id, ev.inicio, ctx.clima, ctx.lluvia)
     conv = conveniencia(ev, ctx, economia)
-    return Decision(cultivo_id, ev.inicio, viabilidad(ev, ctx), riesgo(ev, ctx), conv,
-                    fundamentacion(ev, conv), ev)
+    viab = viabilidad(ev, ctx)
+    if historial is not None:
+        viab = aplicar_reglas(viab, reglas_transicion(ctx, list(historial), cultivo_id,
+                                                      renovacion_confirmada))
+    return Decision(cultivo_id, ev.inicio, viab, riesgo(ev, ctx, ext), conv, fundamentacion(ev, conv), ev,
+                    riesgo_climatico.clima_por_escenario(ext, ev.escenarios),
+                    {k: v for k, v in ext.items() if k != "detalle"})
 
 
 # --- F1 y F2 ------------------------------------------------------------------------------
@@ -300,11 +362,12 @@ def _fila(d: Decision) -> dict:
         "viabilidad": d.viabilidad["estado"],
         "riesgos_altos": niveles.count("alto"),
         "riesgos_medios": niveles.count("medio"),
-        "estres_critico_medio": _v(ev, "medio", "dias_estres_etapa_critica"),
-        "cobertura_medio": _v(ev, "medio", "cobertura_hidrica"),
-        "cobertura_desfavorable": _v(ev, "desfavorable", "cobertura_hidrica"),
-        "demanda_neta_mm": _v(ev, "medio", "demanda_neta"),
-        "margen_medio_soles_ha": (d.conveniencia.get("margen_soles_ha") or {}).get("medio"),
+        "estres_critico_deficit_medio": _v(ev, MEDIO, "dias_estres_etapa_critica"),
+        "cobertura_deficit_medio": _v(ev, MEDIO, "cobertura_hidrica"),
+        "cobertura_deficit_alto": _v(ev, ALTO, "cobertura_hidrica"),
+        "demanda_neta_mm": _v(ev, MEDIO, "demanda_neta"),
+        "frecuencia_exceso_lluvia": d.extremos.get("frecuencia_exceso"),
+        "margen_deficit_medio_soles_ha": (d.conveniencia.get("margen_soles_ha") or {}).get(MEDIO),
         "fundamentacion": d.fundamentacion["nivel"],
     }
 
@@ -317,10 +380,10 @@ def _ordenar(tabla: pd.DataFrame) -> pd.DataFrame:
 
 
 def f1_ventanas(ctx: Contexto, cultivo_id: str, desde, hasta, paso_dias: int = 15,
-                economia: dict | None = None, **kw) -> dict:
+                economia: dict | None = None, historial: list[str] | None = None, **kw) -> dict:
     """F1 — ¿cuándo conviene sembrar? Evalúa ventanas cada ``paso_dias`` entre dos fechas."""
     fechas = pd.date_range(desde, hasta, freq=f"{paso_dias}D")
-    decisiones = [decidir(ctx, cultivo_id, f, economia, **kw) for f in fechas]
+    decisiones = [decidir(ctx, cultivo_id, f, economia, historial, **kw) for f in fechas]
     tabla = _ordenar(pd.DataFrame([_fila(d) for d in decisiones]))
     return {"tabla": tabla, "decisiones": decisiones,
             "regla_orden": "viabilidad → menos riesgos altos → menos riesgos medios → menor demanda"}
@@ -337,36 +400,82 @@ def tipo_transicion(previo: str | None, objetivo: str) -> str:
     return "transición" if get_cultivo(objetivo).perenne else "cambio"
 
 
-def reglas_transicion(ctx: Contexto, historial: list[str], objetivo: str) -> list[str]:
-    """Reglas RT-01…RT-07 aplicables a la transición desde el historial."""
+def reglas_transicion(ctx: Contexto, historial: list[str], objetivo: str,
+                      renovacion_confirmada: bool = False) -> list[dict]:
+    """Reglas RT de la v0.7 §4.4 con su tipo y su efecto sobre la viabilidad.
+
+    - ``bloqueante``: impide la opción («no viable»). RT-06 y RT-08 se evalúan en `viabilidad`.
+    - ``condicionante``: deja la opción «por determinar» o «con restricciones» hasta tener el dato
+      o la decisión (RT-01, RT-05).
+    - ``informativa``: solo avisa; no cambia la viabilidad (RT-02, RT-04, por acuerdo de la v0.7).
+    """
     previo = historial[-1] if historial else None
+    c = get_cultivo(objetivo)
     out = []
+
+    def regla(codigo, tipo, efecto, texto):
+        out.append({"regla": codigo, "tipo": tipo, "efecto": efecto, "texto": texto})
+
     if previo and get_cultivo(previo).perenne and previo != objetivo:
-        out.append("RT-01: el perenne en producción solo cambia con una decisión explícita de renovación.")
-    if get_cultivo(objetivo).perenne and previo != objetivo:
-        out.append("RT-02: instalar el perenne implica 3–4 años sin ingreso y un compromiso de ~20 años.")
+        if renovacion_confirmada:
+            regla("RT-01", "informativa", None, "Renovación del huerto confirmada por el agricultor.")
+        else:
+            regla("RT-01", "condicionante", "por determinar",
+                  "El huerto en producción solo cambia con una decisión explícita de renovación.")
+    if c.perenne and previo != objetivo:
+        regla("RT-02", "informativa", None,
+              "Instalar el frutal implica 3–4 años sin ingreso y un compromiso de ~20 años.")
     if objetivo == "arroz" and historial[-2:] == ["arroz", "arroz"]:
-        out.append("RT-04 (informativa): dos campañas seguidas de arroz; conviene revisarlo con un técnico.")
-    if previo == "arroz" and get_cultivo(objetivo).perenne:
-        faltan = [n for v, n in (("water_table_depth", "napa"), ("soil_ec", "ECe del suelo"),
-                                 ("water_ec", "ECw del agua")) if _ultimo(ctx.local, v) is None]
-        out.append("RT-05: verificar drenaje y salinidad antes de pasar de arroz a frutal"
-                   + (f"; faltan: {', '.join(faltan)}" if faltan else "; datos disponibles."))
+        regla("RT-04", "informativa", None,
+              "Dos campañas seguidas de arroz; conviene revisarlo con un técnico.")
+    if previo == "arroz" and c.perenne:
+        napa, ece, ecw = (_ultimo(ctx.local, v) for v in ("water_table_depth", "soil_ec", "water_ec"))
+        faltan = [n for d, n in ((napa, "napa"), (ece, "ECe del suelo"), (ecw, "ECw del agua")) if d is None]
+        if faltan:
+            regla("RT-05", "condicionante", "por determinar",
+                  "Pasar de arroz a frutal exige verificar drenaje y salinidad; faltan: "
+                  + ", ".join(faltan) + ".")
+        else:
+            problemas = []
+            if napa[0] < UMBRAL_NAPA_M:
+                problemas.append(f"napa a {napa[0]:.1f} m")
+            umbral = c.get("ece_umbral")
+            if umbral is not None and ecw[0] > umbral / 1.5:  # ECw ≈ ECe / 1,5 (FAO-29)
+                problemas.append(f"agua de riego salina (ECw {ecw[0]:.1f} dS/m)")
+            if problemas:
+                regla("RT-05", "condicionante", "viable con restricciones",
+                      "Drenaje o salinidad limitantes para el frutal: " + ", ".join(problemas) + ".")
+            else:
+                regla("RT-05", "informativa", None, "Drenaje y salinidad verificados sin limitaciones.")
     return out
 
 
+def aplicar_reglas(viab: dict, reglas: list[dict]) -> dict:
+    """Incorpora a la viabilidad el efecto de las reglas bloqueantes y condicionantes."""
+    estados = [viab["estado"]] + [r["efecto"] for r in reglas if r["efecto"]]
+    motivos = [m for m in viab["motivos"] if m != "Sin incompatibilidades detectadas."]
+    motivos += [f"{r['regla']}: {r['texto']}" for r in reglas if r["efecto"]]
+    return {"estado": max(estados, key=ORDEN_VIABILIDAD.get),
+            "motivos": motivos or ["Sin incompatibilidades detectadas."],
+            "reglas_transicion": reglas}
+
+
 def f2_cultivos(ctx: Contexto, cultivos: list[str], inicio, historial: list[str] | None = None,
-                economia: dict | None = None, **kw) -> dict:
-    """F2 — ¿qué conviene sembrar? Compara cultivos en una ventana y la transición desde el historial."""
+                economia: dict | None = None, renovacion_confirmada: bool = False, **kw) -> dict:
+    """F2 — ¿qué conviene sembrar? Compara cultivos en una ventana y la transición desde el historial.
+
+    Las reglas de transición condicionantes (RT-01, RT-05) sí cambian la viabilidad; las
+    informativas (RT-02, RT-04) solo se listan.
+    """
     historial = list(historial or [])
-    decisiones = [decidir(ctx, c, inicio, economia, **kw) for c in cultivos]
+    decisiones = [decidir(ctx, c, inicio, economia, historial, renovacion_confirmada, **kw)
+                  for c in cultivos]
     filas = []
     for d in decisiones:
         fila = _fila(d)
         fila["transicion"] = tipo_transicion(historial[-1] if historial else None, d.cultivo)
-        reglas = reglas_transicion(ctx, historial, d.cultivo)
-        fila["reglas"] = " | ".join(r.split(":")[0] for r in reglas) or "—"
+        reglas = d.viabilidad.get("reglas_transicion", [])
+        fila["reglas"] = " | ".join(f"{r['regla']} ({r['tipo']})" for r in reglas) or "—"
         filas.append(fila)
-        d.viabilidad.setdefault("reglas_transicion", reglas)
     return {"tabla": _ordenar(pd.DataFrame(filas)), "decisiones": decisiones,
             "regla_orden": "viabilidad → menos riesgos altos → menos riesgos medios → menor demanda"}

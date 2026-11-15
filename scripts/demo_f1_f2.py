@@ -31,6 +31,15 @@ def local_ejemplo() -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def _opcional(get_dataset, fuente, aoi, variables):
+    """IMERG y SRTM mejoran el riesgo por exceso de lluvia, pero el demo funciona sin ellos."""
+    try:
+        return get_dataset(fuente, aoi, variables=variables, start="2001-01-01", historico=True)
+    except Exception as error:  # sin red o sin credenciales
+        print(f"  ({fuente} no disponible: {error})")
+        return None
+
+
 def main(ruta_power: str, repo_datos: str) -> None:
     os.chdir(repo_datos)
     from nortex_data import get_dataset
@@ -44,7 +53,10 @@ def main(ruta_power: str, repo_datos: str) -> None:
         enso=get_dataset("enso", aoi, variables=["icen"]),
         reservorios=get_dataset("senamhi_reportes", aoi, variables=["reservoir_volume_report"]),
         local=local_ejemplo(),
+        lluvia_datos=_opcional(get_dataset, "imerg", aoi, ["precipitation"]),
+        relieve=_opcional(get_dataset, "srtm", aoi, ["slope"]),
     )
+    print("Lluvia para extremos:", ctx.procedencia.get("lluvia_extremos", "POWER (IMERG no disponible)"))
 
     print("\n======== F1 — ¿Cuándo sembrar caupí? (ventanas de mayo a octubre de 2027) ========")
     f1 = f1_ventanas(ctx, "caupi", "2027-05-01", "2027-10-31", paso_dias=30)
@@ -55,6 +67,9 @@ def main(ruta_power: str, repo_datos: str) -> None:
     print("  Viabilidad:", mejor.viabilidad["estado"], "—", " ".join(mejor.viabilidad["motivos"]))
     for r in mejor.riesgo:
         print(f"  Riesgo [{r['nivel']}] {r['factor']}: {r['evidencia']}")
+    print("  Clima de cada escenario (resultados independientes, no se suman):")
+    print(pd.DataFrame(mejor.clima_escenarios).to_string(index=False))
+    print("  Nota:", mejor.evaluacion.escenarios[0].nota)
     fund = mejor.fundamentacion
     print("  Fundamentación:", fund["nivel"], "; faltan:", "; ".join(fund["faltantes"]))
 
@@ -65,7 +80,7 @@ def main(ruta_power: str, repo_datos: str) -> None:
     for d in f2["decisiones"]:
         print(f"\n  {d.cultivo}: {d.viabilidad['estado']} — {' '.join(d.viabilidad['motivos'])}")
         for regla in d.viabilidad.get("reglas_transicion", []):
-            print(f"    · {regla}")
+            print(f"    · {regla['regla']} ({regla['tipo']}): {regla['texto']}")
         for r in d.riesgo:
             if r["nivel"] in {"alto", "medio"}:
                 print(f"    Riesgo [{r['nivel']}] {r['factor']}: {r['evidencia']}")

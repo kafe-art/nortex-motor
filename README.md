@@ -18,12 +18,13 @@ dos juegos de ids que existen en el equipo (`precip_power` / `rain_power`).
 | `balance` | Balance diario FAO-56 en agotamiento con **ETc,adj = Ks·Kc·ET0**, percolación y prueba de cierre de masa | §9.3 |
 | `riego` | Turnos, reparto de la dotación, **cobertura hídrica C** y **autonomía entre turnos** | §9.4, §9.5 |
 | `termico` | GDD con techo, días de calor en la etapa media, **noches frescas** y **Tmin media del invierno** para el mango | §9.2, §9.6 |
-| `escenarios` | Ventana de campaña en cada año histórico, P10/P50/P90 y **año análogo**; estratificable por años (p. ej. ICEN) | §6.2, §6.3 |
+| `escenarios` | Ventana de campaña en cada año histórico, P10/P50/P90 y **año análogo**; estratificable por años (p. ej. ICEN). Los nombres describen el clima (`deficit_bajo`, `deficit_medio`, `deficit_alto`), **no si es bueno o malo para el cultivo** | §6.2, §6.3 |
+| `riesgo_climatico` | **Exceso de lluvia** (RX5day sobre el aguacero local de 1 vez cada 5 años, IMERG si hay ≥ 15 años; si no, POWER) y **calor en floración** (ventana de la ficha del cultivo): **frecuencia en todos los años + peor año**, nivel según la sensibilidad del cultivo; además, el clima del año análogo de cada escenario por separado | §6.6 |
 | `simulacion` | Campaña completa y comparación de escenarios; arroz anegado como demanda + pérdidas | §14 |
 | `validacion` | Compara POWER con una estación (SENAMHI o NOAA), corrige Tmax/Tmin/lluvia **solo si la validación cruzada por año muestra mejora** y reescala ET0 | §19 |
 | `reservorio` | Volumen, % de capacidad útil, percentil frente a otros años y dotación análoga | D-17, EX-15 |
 | `hindcast` | ¿El rango P10–P90 habría contenido lo observado? Cobertura con IC de Wilson | §6.5 |
-| `decision` | **F1** (`f1_ventanas`) y **F2** (`f2_cultivos`) con **cuatro dimensiones separadas**: viabilidad (RT-06, RT-08, salinidad, compromiso perenne), riesgo (factores con nivel y evidencia), conveniencia (margen ajustado por Ky de FAO-33 y salinidad, margen por m³) y fundamentación (procedencia de cada insumo y datos que faltan, RT-07). Sin índice compuesto: orden lexicográfico declarado | §3, §4, §14 |
+| `decision` | **F1** (`f1_ventanas`) y **F2** (`f2_cultivos`) con **cuatro dimensiones separadas**: viabilidad (RT-06, RT-08, salinidad, compromiso perenne y reglas de transición **con tipo**: bloqueante, condicionante —RT-01, RT-05 cambian la viabilidad— o informativa —RT-02, RT-04 solo avisan—), riesgo (factores con nivel y evidencia; el exceso de lluvia sube un nivel si el drenaje es desfavorable: pendiente < 0,5 %, arcilla ≥ 30 %, napa < 1,5 m), conveniencia (margen ajustado por Ky de FAO-33 y salinidad, margen por m³) y fundamentación (procedencia de cada insumo y datos que faltan, RT-07). Sin índice compuesto: orden lexicográfico declarado | §3, §4, §14 |
 | `pipeline` | `preparar()` + `evaluar_ctx()` (o el atajo `evaluar()`): elige la mejor fuente para cada insumo (laboratorio > SoilGrids; PCR > análoga; clima corregido > sin corregir), filtra escenarios por ICEN y registra la procedencia | §14 |
 
 Categorías de dato (enum único §6.1): `observado, modelado, pronosticado, escenario, simulado, declarado`.
@@ -40,7 +41,7 @@ clima = desde_largo(pd.read_parquet("power_san_lorenzo_1991_2026.parquet"))
 out = simular_escenarios("caupi", "2027-06-01", TEXTURAS_FAO56["franco"],
                          Riego(intervalo_dias=14, dotacion_m3_ha=4000, eficiencia=0.5), clima)
 print(resumen(out["resultados"]))
-print(out["resultados"]["medio"].valores["cobertura_hidrica"])
+print(out["resultados"]["deficit_medio"].valores["cobertura_hidrica"])
 ```
 
 Demostración con datos reales:
@@ -53,7 +54,7 @@ python scripts/demo_san_lorenzo.py ../nortex-data/data/processed/power_san_loren
 
 **Caupí, siembra 1 de junio, turno cada 14 días, 4 000 m³/ha, riego por gravedad (Ea 0,5):**
 
-| | Favorable (P10, 2000) | Medio (P50, 2007) | Desfavorable (P90, 2015) |
+| | Déficit bajo (P10, 2000) | Déficit medio (P50, 2007) | Déficit alto (P90, 2015) |
 | :-- | --: | --: | --: |
 | ET0 de la campaña (mm) | 460 | 498 | 519 |
 | Demanda neta (mm) | 344 | 374 | 389 |
@@ -122,8 +123,14 @@ Con dotaciones y turnos **de ejemplo** (PCR real pendiente), riego por gravedad 
 - La métrica de escenarios por defecto es el **déficit climático Σ(ET0 − P)**, no la
   precipitación: en San Lorenzo la lluvia es casi nula y sus percentiles quedan degenerados.
   Es una propuesta: el equipo debe confirmarla frente a §6.2.
-- POWER sobreestima Tmax (~+2,6 °C frente al aeropuerto de Piura), lo que eleva ET0.
-- Escenarios: no son pronósticos ni llevan probabilidad.
+- POWER sobreestima Tmax (~+2,6 °C frente al aeropuerto de Piura), lo que eleva ET0 y el
+  conteo de días de calor: el riesgo de calor debe leerse con el clima corregido.
+- Escenarios: no son pronósticos ni llevan probabilidad. Se ordenan por déficit de agua, por
+  eso el año más lluvioso o más caluroso puede no estar entre ellos; el exceso de lluvia y el
+  calor se miden aparte, con la frecuencia de todos los años.
+- «Exceso de lluvia» es **potencial**: sin datos de drenaje (napa, pendiente, textura) el
+  encharcamiento queda «no confirmado». Cortes de frecuencia por sensibilidad: POR VALIDAR.
+- Ventanas de floración: rangos de literatura; el limón sutil no tiene (depende del manejo).
 - **Pendiente:** datos reales de PCR, turnos, economía de Piura y serie histórica del reservorio;
   calibrar Kc de perennes; F3 (seguimiento con Sentinel-2/ECOSTRESS).
 
