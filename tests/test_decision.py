@@ -164,3 +164,38 @@ def test_historial_corto_no_da_riesgo_bajo(clima_sintetico):
     d = decidir(corto, "caupi", "2021-01-20", dotacion_m3_ha=6000)
     exceso = next(r for r in d.riesgo if r["factor"] == "Exceso de lluvia (potencial)")
     assert exceso["nivel"] == "por determinar"
+
+
+def test_datos_de_ejemplo_hacen_provisional_la_viabilidad(clima_sintetico):
+    local = _local(lab_theta_fc=(0.26, "lab"), lab_theta_wp=(0.12, "lab"),
+                   water_allocation=(20_000, "valor de ejemplo / cultivo=caupi"),
+                   turn_interval=(10, "valor de ejemplo / comision=EJEMPLO"))
+    ctx_ej = preparar(clima_sintetico.loc["2001":"2020"], local=local, fecha_consulta=HOY)
+    d = decidir(ctx_ej, "caupi", "2021-06-01")
+    assert d.viabilidad["definitiva"] is False
+    assert any("ejemplo" in p for p in d.viabilidad["pendiente"])
+    assert d.fundamentacion["insumos"]["dotacion"] == "débil"
+    assert d.fundamentacion["nivel"] == "limitada"
+
+
+def test_dotacion_real_de_la_junta_es_definitiva(ctx):
+    d = decidir(ctx, "caupi", "2021-06-01", dotacion_m3_ha=4000)
+    assert d.viabilidad["definitiva"] is False  # dotación ingresada a mano: falta el PCR
+    assert d.fundamentacion["insumos"]["dotacion"] == "media"
+
+
+def test_validaciones_inia_reemplazan_parametros(ctx):
+    from nortex_motor.catalogo import cultivo, establecer_validaciones
+
+    try:
+        establecer_validaciones({"caupi": {"calor_floracion_c": {"valor": 37.0, "fuente": "INIA (prueba)"}}})
+        assert cultivo("caupi").get("calor_floracion_c") == 37.0
+        assert cultivo("caupi").parametros["calor_floracion_c"].estado == "VALIDADO"
+        d = decidir(ctx, "caupi", "2021-01-15", dotacion_m3_ha=20_000)
+        assert d.extremos["umbral_calor_validado"] is True
+        with pytest.raises(ValueError):
+            establecer_validaciones({"papa": {"kc_med": {"valor": 1.0, "fuente": "x"}}})
+        assert cultivo("caupi").get("calor_floracion_c") == 37.0  # se conservan las anteriores
+    finally:
+        establecer_validaciones(None)
+    assert cultivo("caupi").get("calor_floracion_c") == 35.0

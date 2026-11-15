@@ -13,6 +13,9 @@ import yaml
 
 ESTADOS = {"POR_VALIDAR", "VALIDADO"}
 SENSIBILIDADES = ("baja", "media", "alta")
+#: Parámetros confirmados con fichas locales (INIA, MIDAGRI…) que reemplazan a los del YAML:
+#: {cultivo: {parametro: {"valor": ..., "fuente": "..."}}}. Ver `establecer_validaciones`.
+_VALIDACIONES: dict[str, dict[str, dict]] = {}
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,12 @@ def _config_dir() -> Path:
 def cargar_cultivos() -> dict[str, Cultivo]:
     """Carga y valida el catálogo; cada parámetro debe tener valor, fuente y estado."""
     data = yaml.safe_load((_config_dir() / "cultivos.yaml").read_text(encoding="utf-8"))
+    for cid, params in _VALIDACIONES.items():
+        if cid not in data["cultivos"]:
+            raise ValueError(f"Validación para un cultivo inexistente: {cid!r}")
+        for nombre, p in params.items():
+            data["cultivos"][cid]["parametros"][nombre] = {
+                "valor": p["valor"], "fuente": str(p["fuente"]), "estado": "VALIDADO"}
     out: dict[str, Cultivo] = {}
     for cid, c in data["cultivos"].items():
         params = {}
@@ -95,6 +104,29 @@ def cargar_cultivos() -> dict[str, Cultivo]:
                 raise ValueError(f"{cid}: floracion_dias debe estar dentro del ciclo")
         out[cid] = Cultivo(cid, c["nombre"], c["cientifico"], tipo, bool(c.get("anegado")), params)
     return out
+
+
+def establecer_validaciones(validaciones: dict[str, dict[str, dict]] | None) -> None:
+    """Reemplaza parámetros del catálogo por valores confirmados (estado VALIDADO).
+
+    ``validaciones = {"caupi": {"calor_floracion_c": {"valor": 36.0, "fuente": "INIA, ficha …"}}}``.
+    Se aplican las mismas comprobaciones que al YAML; si una falla, se restauran las anteriores.
+    """
+    global _VALIDACIONES
+    previas = _VALIDACIONES
+    _VALIDACIONES = {c: dict(p) for c, p in (validaciones or {}).items()}
+    cargar_cultivos.cache_clear()
+    try:
+        cargar_cultivos()
+    except Exception:
+        _VALIDACIONES = previas
+        cargar_cultivos.cache_clear()
+        raise
+
+
+def por_validar(cid: str) -> list[str]:
+    """Parámetros del cultivo que siguen POR_VALIDAR (sin ficha local)."""
+    return sorted(n for n, p in cultivo(cid).parametros.items() if p.estado != "VALIDADO")
 
 
 def cultivo(cid: str) -> Cultivo:

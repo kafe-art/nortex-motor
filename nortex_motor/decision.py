@@ -25,6 +25,7 @@ import pandas as pd
 
 from nortex_motor import riesgo_climatico
 from nortex_motor.catalogo import cultivo as get_cultivo
+from nortex_motor.catalogo import por_validar
 from nortex_motor.pipeline import Contexto, Evaluacion, _ultimo, evaluar_ctx
 from nortex_motor.termico import tmin_media_invierno
 
@@ -52,6 +53,38 @@ def _nivel(valor, cortes) -> str:
         return "por determinar"
     bajo, alto = cortes
     return "bajo" if valor < bajo else "medio" if valor < alto else "alto"
+
+
+def _es_ejemplo(origen: str) -> bool:
+    o = (origen or "").lower()
+    return "ejemplo" in o or "example" in o
+
+
+def datos_provisionales(procedencia: dict) -> list[str]:
+    """Insumos de la viabilidad que no son datos reales de la Junta (la hacen provisional)."""
+    out = []
+    dot, tur = procedencia.get("dotacion", ""), procedencia.get("turnos", "")
+    if _es_ejemplo(dot):
+        out.append("La dotación es un valor de ejemplo, no el PCR de la Junta de Usuarios.")
+    elif dot == "parámetro":
+        out.append("La dotación fue ingresada en la consulta; confirmarla con el PCR de la Junta.")
+    elif dot.startswith("escenario"):
+        out.append("La dotación se estimó con una campaña análoga; falta el PCR de esta campaña.")
+    if _es_ejemplo(tur):
+        out.append("Los turnos de riego son de ejemplo, no los de la comisión.")
+    elif tur == "parámetro":
+        out.append("El intervalo de turnos fue ingresado en la consulta; confirmarlo con la comisión.")
+    elif tur.startswith("por determinar"):
+        out.append("Sin intervalo de turnos de la comisión: se simuló sin turnos.")
+    return out
+
+
+def marcar_provisional(viab: dict, procedencia: dict) -> dict:
+    """Agrega ``definitiva`` y ``pendiente`` sin cambiar el estado (lo decide el agua simulada)."""
+    pendiente = datos_provisionales(procedencia)
+    if viab["estado"] == "por determinar":
+        pendiente = pendiente or ["Faltan datos para decidir (ver motivos)."]
+    return {**viab, "definitiva": not pendiente, "pendiente": pendiente}
 
 
 def _v(ev: Evaluacion, escenario: str, nombre: str):
@@ -194,10 +227,15 @@ def riesgo(ev: Evaluacion, ctx: Contexto, extremos: dict | None = None) -> list[
                 fuente_ll)
         if ext.get("frecuencia_calor") is not None:
             peor = ext["peor_anio_calor"]
+            otros = [s for s in ext.get("sensibilidad_calor", []) if s["umbral_c"] > ext["umbral_calor_c"]]
+            sens = "; ".join(f"con {s['umbral_c']:.0f} °C: {s['nivel']} ({s['anios']}/{n})" for s in otros)
+            validado = ext.get("umbral_calor_validado")
             add("Calor en floración", ext["nivel_calor"],
                 f"en {ext['anios_calor']} de {n} años hubo ≥ {riesgo_climatico.MIN_DIAS_CALOR} días con "
                 f"Tmax > {ext['umbral_calor_c']:.0f} °C en la floración ({ext['ventana_floracion']}); "
-                f"peor año {peor['anio']}: {peor['dias']} días",
+                f"peor año {peor['anio']}: {peor['dias']} días"
+                + ("" if validado else
+                   f". Umbral POR VALIDAR con INIA ({ext.get('umbral_calor_origen')}); {sens}"),
                 "clima corregido + ventana de floración de la ficha del cultivo")
         elif ext.get("nivel_calor") == "por determinar":
             add("Calor en floración", "por determinar",
@@ -315,10 +353,14 @@ def fundamentacion(ev: Evaluacion, conv: dict) -> dict:
         "clima": "buena" if "corregido" in p.get("clima", "") else "media",
         "suelo": "buena" if p.get("suelo", "").startswith("laboratorio") else
                  "media" if "SoilGrids" in p.get("suelo", "") else "débil",
-        "dotacion": "débil" if p.get("dotacion", "").startswith("por determinar") else
-                    "media" if p.get("dotacion", "").startswith("escenario") else "buena",
-        "turnos": "débil" if p.get("turnos", "").startswith("por determinar") else "buena",
-        "parametros_cultivo": "media",  # todos POR VALIDAR hasta tener fichas INIA
+        "dotacion": "débil" if p.get("dotacion", "").startswith("por determinar")
+                    or _es_ejemplo(p.get("dotacion", "")) else
+                    "media" if p.get("dotacion", "").startswith(("escenario", "parámetro")) else "buena",
+        "turnos": "débil" if p.get("turnos", "").startswith("por determinar")
+                  or _es_ejemplo(p.get("turnos", "")) else
+                  "media" if p.get("turnos", "") == "parámetro" else "buena",
+        # buena solo si todos los parámetros del cultivo están validados con fichas locales
+        "parametros_cultivo": "media" if por_validar(ev.cultivo) else "buena",
         "escenarios": "buena" if ev.hindcast.get("veredicto", "").startswith("calibrado") else "débil",
         "economia": "buena" if conv.get("estado") == "calculado" else "débil",
     }
@@ -334,7 +376,9 @@ def fundamentacion(ev: Evaluacion, conv: dict) -> dict:
         "dotacion": "dotación del PCR de la campaña (Junta de Usuarios)",
         "turnos": "intervalo de turnos de la comisión",
         "clima": "estación de referencia en el valle (SENAMHI)",
-        "parametros_cultivo": "fichas INIA del cultivo (Kc, umbrales)",
+        "parametros_cultivo": "fichas INIA del cultivo: "
+                              + ", ".join(por_validar(ev.cultivo)[:6])
+                              + ("…" if len(por_validar(ev.cultivo)) > 6 else ""),
         "escenarios": "más años de historia o revisar la métrica de escenarios",
         "economia": "rendimiento, precio y costo de Piura (SIEA/MIDAGRI)",
     }
@@ -345,13 +389,15 @@ def fundamentacion(ev: Evaluacion, conv: dict) -> dict:
 def decidir(ctx: Contexto, cultivo_id: str, inicio, economia: dict | None = None,
             historial: list[str] | None = None, renovacion_confirmada: bool = False, **kw) -> Decision:
     """Evalúa un cultivo en una ventana y devuelve las cuatro dimensiones."""
+    umbral_calor_c = kw.pop("umbral_calor_c", None)
     ev = evaluar_ctx(ctx, cultivo_id, inicio, **kw)
-    ext = riesgo_climatico.evaluar(cultivo_id, ev.inicio, ctx.clima, ctx.lluvia)
+    ext = riesgo_climatico.evaluar(cultivo_id, ev.inicio, ctx.clima, ctx.lluvia, umbral_calor_c)
     conv = conveniencia(ev, ctx, economia)
     viab = viabilidad(ev, ctx)
     if historial is not None:
         viab = aplicar_reglas(viab, reglas_transicion(ctx, list(historial), cultivo_id,
                                                       renovacion_confirmada))
+    viab = marcar_provisional(viab, ev.procedencia)
     return Decision(cultivo_id, ev.inicio, viab, riesgo(ev, ctx, ext), conv, fundamentacion(ev, conv), ev,
                     riesgo_climatico.clima_por_escenario(ext, ev.escenarios),
                     {k: v for k, v in ext.items() if k != "detalle"})
@@ -366,6 +412,7 @@ def _fila(d: Decision) -> dict:
         "cultivo": d.cultivo,
         "inicio": d.inicio.date(),
         "viabilidad": d.viabilidad["estado"],
+        "viabilidad_definitiva": d.viabilidad.get("definitiva"),
         "riesgos_altos": niveles.count("alto"),
         "riesgos_medios": niveles.count("medio"),
         "estres_critico_deficit_medio": _v(ev, MEDIO, "dias_estres_etapa_critica"),

@@ -72,3 +72,17 @@ def test_historial_corto_queda_por_determinar():
     assert out["umbral_rx5day_mm"] is None
     assert out["nivel_exceso"] == "por determinar" and out["frecuencia_exceso"] is None
     assert "historial insuficiente" in out["motivo_exceso"]
+
+
+def test_umbral_de_calor_ajustable_y_sensibilidad():
+    clima = _clima(calor=[2010, 2012, 2015])
+    base = rc.evaluar("caupi", "2021-01-20", clima)
+    assert base["anios_calor"] == 3 and base["umbral_calor_c"] == 35.0
+    assert not base["umbral_calor_validado"]
+    # 38 °C no supera un umbral de 38 °C: con el umbral de INIA el riesgo desaparece
+    otro = rc.evaluar("caupi", "2021-01-20", clima, umbral_calor_c=38.0)
+    assert otro["anios_calor"] == 0 and otro["nivel_calor"] == "bajo"
+    assert "consulta" in otro["umbral_calor_origen"]
+    sens = {s["umbral_c"]: s for s in base["sensibilidad_calor"]}
+    assert sens[35.0]["anios"] == 3 and sens[38.0]["anios"] == 0
+    assert base["tmax_floracion"]["media_c"] >= 30.0

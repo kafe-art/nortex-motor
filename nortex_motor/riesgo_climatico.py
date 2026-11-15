@@ -37,6 +37,9 @@ MIN_DIAS_CALOR = 3              # días con Tmax > umbral en floración para con
 CORTES_EXCESO = {"alta": (0.05, 0.15), "media": (0.10, 0.20), "baja": (0.15, 0.30)}
 #: Frecuencia de años con calor en floración → nivel.
 CORTES_CALOR = (0.10, 0.30)
+#: Umbrales alternativos (°C sobre el de la ficha) para mostrar cuánto depende el nivel del umbral
+#: mientras no esté validado con INIA (en San Lorenzo la Tmax media de feb–mar ya ronda 34 °C).
+SENSIBILIDAD_CALOR_C = (-1.0, 0.0, 1.0, 2.0, 3.0)
 
 
 def umbral_lluvia(precip: pd.Series) -> float | None:
@@ -76,8 +79,18 @@ def describir_ventana(cultivo_id: str) -> str:
     return "sin dato de floración" if a is None else f"días {a}–{b} después de la siembra"
 
 
-def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | None = None) -> dict:
-    """Frecuencia histórica de exceso de lluvia y de calor en floración para una fecha de siembra."""
+def _frecuencia_calor(tx_flor: dict[int, pd.Series], umbral: float) -> tuple[int, pd.Series]:
+    dias = pd.Series({a: int((t > umbral).sum()) for a, t in tx_flor.items()}, dtype=int)
+    return int((dias >= MIN_DIAS_CALOR).sum()), dias
+
+
+def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | None = None,
+            umbral_calor_c: float | None = None) -> dict:
+    """Frecuencia histórica de exceso de lluvia y de calor en floración para una fecha de siembra.
+
+    ``umbral_calor_c`` reemplaza al umbral de la ficha (p. ej. el que indique INIA) solo en esta
+    evaluación. La salida trae ``sensibilidad_calor``: el nivel con umbrales de −1 a +3 °C.
+    """
     c = get_cultivo(cultivo_id)
     inicio = pd.Timestamp(inicio)
     dias = c.ciclo_dias or 365
@@ -85,8 +98,13 @@ def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | No
     precip = lluvia.dropna() if usar_imerg else clima["precip"].dropna()
     fuente = "IMERG (0,1°)" if usar_imerg else "NASA POWER (celda ~50 km; suaviza los aguaceros)"
     umbral = umbral_lluvia(precip)
-    umbral_calor = c.get("calor_floracion_c")
-    filas = []
+    if umbral_calor_c is not None:
+        umbral_calor = float(umbral_calor_c)
+        origen_calor = "ingresado en la consulta (no es el de la ficha)"
+    else:
+        umbral_calor = c.get("calor_floracion_c")
+        origen_calor = c.fuente("calor_floracion_c")
+    filas, tx_flor = [], {}
     for anio in sorted(set(precip.index.year) & set(clima["tmax"].dropna().index.year)):
         try:
             a = pd.Timestamp(anio, inicio.month, inicio.day)
@@ -99,15 +117,20 @@ def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | No
             continue
         rx5 = float(p.rolling(5).sum().max())
         mascara = mascara_floracion(cultivo_id, tx.index)
+        if mascara is not None:
+            tx_flor[anio] = tx[mascara.to_numpy()]
         calor = (None if mascara is None or umbral_calor is None
-                 else int((tx[mascara.to_numpy()] > umbral_calor).sum()))
+                 else int((tx_flor[anio] > umbral_calor).sum()))
         filas.append({"anio": anio, "rx5day_mm": round(rx5, 1), "lluvia_total_mm": round(float(p.sum()), 1),
                       "exceso": bool(umbral is not None and rx5 > umbral), "dias_calor_floracion": calor})
     detalle = pd.DataFrame(filas).set_index("anio") if filas else pd.DataFrame()
     out = {"fuente_lluvia": fuente, "umbral_rx5day_mm": None if umbral is None else round(umbral, 1),
            "anios": len(detalle), "ventana_floracion": describir_ventana(cultivo_id),
            "sensibilidad_anegamiento": c.get("sensibilidad_anegamiento"),
-           "umbral_calor_c": umbral_calor, "detalle": detalle}
+           "umbral_calor_c": umbral_calor, "umbral_calor_origen": origen_calor,
+           "umbral_calor_validado": umbral_calor_c is None and "VALIDADO" in origen_calor
+           and "POR_VALIDAR" not in origen_calor,
+           "detalle": detalle}
     if detalle.empty:
         out.update(frecuencia_exceso=None, nivel_exceso="por determinar",
                    motivo_exceso="sin campañas completas en el registro",
@@ -138,6 +161,18 @@ def evaluar(cultivo_id: str, inicio, clima: pd.DataFrame, lluvia: pd.Series | No
         peor_c = calor.astype(float).idxmax()
         out["peor_anio_calor"] = {"anio": int(peor_c), "dias": int(calor.loc[peor_c])}
         out["nivel_calor"] = _nivel(out["frecuencia_calor"], CORTES_CALOR)
+        validos = {a: t for a, t in tx_flor.items() if a in detalle.index}
+        todos = pd.concat(validos.values())
+        out["tmax_floracion"] = {"media_c": round(float(todos.mean()), 1),
+                                 "p90_c": round(float(todos.quantile(0.9)), 1),
+                                 "fraccion_dias_sobre_umbral": round(float((todos > umbral_calor).mean()), 3)}
+        sens = []
+        for delta in SENSIBILIDAD_CALOR_C:
+            u = umbral_calor + delta
+            n, _ = _frecuencia_calor(validos, u)
+            sens.append({"umbral_c": u, "anios": n, "frecuencia": round(n / len(detalle), 3),
+                         "nivel": _nivel(n / len(detalle), CORTES_CALOR)})
+        out["sensibilidad_calor"] = sens
     return out
 
 
