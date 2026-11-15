@@ -1,0 +1,97 @@
+# Catálogo agronómico de NORTEX (DOC_AVANCE_SIS_v0.7 §5).
+#
+# Cada parámetro es {valor, fuente, estado}:
+#   estado: POR_VALIDAR (rango de literatura, falta ficha INIA/MIDAGRI local)
+#           VALIDADO    (confirmado con ficha local; ninguno todavía)
+# Fuentes:
+#   FAO56-T11 / T12 / T22 = Allen et al. (1998), FAO-56, tablas 11 (etapas), 12 (Kc), 22 (Zr y p)
+#   MH77 = Maas & Hoffman (1977) / FAO-29: umbral de salinidad a (dS/m) y pendiente b (%/dS/m)
+#   v07  = rango indicativo de DOC_AVANCE_SIS_v0.7 §5.2
+#   lit  = valor de literatura general, sin ficha local
+# El motor nunca usa un valor sin su fuente: si falta (valor: null), la dimensión
+# correspondiente queda «por determinar».
+
+cultivos:
+  arroz:
+    nombre: Arroz
+    cientifico: Oryza sativa
+    tipo: anual
+    anegado: true            # el balance de suelo FAO-56 no aplica: se usa demanda + pérdidas
+    parametros:
+      etapas_dias:  {valor: [30, 30, 60, 30], fuente: FAO56-T11, estado: POR_VALIDAR}
+      kc_ini:       {valor: 1.05, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_med:       {valor: 1.20, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_fin:       {valor: 0.75, fuente: "FAO56-T12 (0,90–0,60, punto medio)", estado: POR_VALIDAR}
+      zr_m:         {valor: 0.5, fuente: FAO56-T22, estado: POR_VALIDAR}
+      p:            {valor: 0.20, fuente: FAO56-T22, estado: POR_VALIDAR}
+      perdidas_mm_dia: {valor: 4.0, fuente: "lit (percolación y filtración en poza)", estado: POR_VALIDAR}
+      tbase_c:      {valor: 10.0, fuente: lit, estado: POR_VALIDAR}
+      tupper_c:     {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
+      calor_floracion_c: {valor: 35.0, fuente: "lit (esterilidad de espiguillas)", estado: POR_VALIDAR}
+      ece_umbral:   {valor: 3.0, fuente: MH77, estado: POR_VALIDAR}
+      ece_pendiente: {valor: 12.0, fuente: MH77, estado: POR_VALIDAR}
+
+  caupi:
+    nombre: Frijol caupí
+    cientifico: Vigna unguiculata
+    tipo: anual
+    anegado: false
+    parametros:
+      etapas_dias:  {valor: [15, 25, 25, 15], fuente: "v07 (ciclo 70–90 d), reparto FAO-56", estado: POR_VALIDAR}
+      kc_ini:       {valor: 0.40, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_med:       {valor: 1.05, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_fin:       {valor: 0.35, fuente: "FAO56-T12 (cosecha en seco)", estado: POR_VALIDAR}
+      zr_m:         {valor: 0.7, fuente: "FAO56-T22 (frijol seco 0,6–0,9)", estado: POR_VALIDAR}
+      p:            {valor: 0.45, fuente: FAO56-T22, estado: POR_VALIDAR}
+      tbase_c:      {valor: 10.0, fuente: lit, estado: POR_VALIDAR}
+      tupper_c:     {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
+      calor_floracion_c: {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
+      ece_umbral:   {valor: 4.9, fuente: MH77, estado: POR_VALIDAR}
+      ece_pendiente: {valor: 12.0, fuente: MH77, estado: POR_VALIDAR}
+
+  maiz:
+    nombre: Maíz amarillo duro
+    cientifico: Zea mays
+    tipo: anual
+    anegado: false
+    parametros:
+      etapas_dias:  {valor: [20, 35, 40, 30], fuente: "v07 (ciclo 110–140 d), reparto FAO56-T11", estado: POR_VALIDAR}
+      kc_ini:       {valor: 0.30, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_med:       {valor: 1.20, fuente: FAO56-T12, estado: POR_VALIDAR}
+      kc_fin:       {valor: 0.35, fuente: "FAO56-T12 (grano seco)", estado: POR_VALIDAR}
+      zr_m:         {valor: 1.0, fuente: "FAO56-T22 (1,0–1,7)", estado: POR_VALIDAR}
+      p:            {valor: 0.55, fuente: FAO56-T22, estado: POR_VALIDAR}
+      tbase_c:      {valor: 10.0, fuente: "lit (método 86/50)", estado: POR_VALIDAR}
+      tupper_c:     {valor: 30.0, fuente: "lit (método 86/50)", estado: POR_VALIDAR}
+      calor_floracion_c: {valor: 35.0, fuente: lit, estado: POR_VALIDAR}
+      ece_umbral:   {valor: 1.7, fuente: MH77, estado: POR_VALIDAR}
+      ece_pendiente: {valor: 12.0, fuente: MH77, estado: POR_VALIDAR}
+
+  mango:
+    nombre: Mango
+    cientifico: Mangifera indica
+    tipo: perenne
+    anegado: false
+    parametros:
+      kc_constante: {valor: 0.70, fuente: "v07 (0,50–0,90, punto medio)", estado: POR_VALIDAR}
+      zr_m:         {valor: 1.5, fuente: "v07 (1,5–2,0)", estado: POR_VALIDAR}
+      p:            {valor: 0.50, fuente: "lit (frutales)", estado: POR_VALIDAR}
+      ece_umbral:   {valor: 1.5, fuente: "v07 (1,5–2,0)", estado: POR_VALIDAR}
+      ece_pendiente: {valor: null, fuente: "sin dato", estado: POR_VALIDAR}
+      noches_frescas_umbral_c: {valor: 16.0, fuente: "v07 §9.6 (15–17 °C)", estado: POR_VALIDAR}
+      periodo_juvenil_anios: {valor: [3, 4], fuente: v07, estado: POR_VALIDAR}
+      vida_util_anios: {valor: [20, 30], fuente: v07, estado: POR_VALIDAR}
+
+  limon_sutil:
+    nombre: Limón sutil
+    cientifico: Citrus × aurantiifolia
+    tipo: perenne
+    anegado: false
+    parametros:
+      kc_constante: {valor: 0.70, fuente: "FAO56-T12 (cítricos, 70 % de dosel)", estado: POR_VALIDAR}
+      zr_m:         {valor: 1.2, fuente: "FAO56-T22 (cítricos 1,2–1,5)", estado: POR_VALIDAR}
+      p:            {valor: 0.50, fuente: FAO56-T22, estado: POR_VALIDAR}
+      ece_umbral:   {valor: 1.5, fuente: "v07 (1,5–1,7)", estado: POR_VALIDAR}
+      ece_pendiente: {valor: null, fuente: "sin dato para C. aurantiifolia", estado: POR_VALIDAR}
+      periodo_juvenil_anios: {valor: [3, 4], fuente: v07, estado: POR_VALIDAR}
+      vida_util_anios: {valor: [15, 25], fuente: v07, estado: POR_VALIDAR}

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nortex-motor"
+version = "0.1.0"
+description = "Motor físico de NORTEX: balance hídrico FAO-56, cobertura hídrica, autonomía entre turnos, indicadores térmicos y escenarios por año análogo."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26", "pandas>=2.1", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "pyarrow>=14"]
+
+[tool.setuptools]
+packages = ["nortex_motor", "nortex_motor.config"]
+
+[tool.setuptools.package-dir]
+"nortex_motor.config" = "config"
+
+[tool.setuptools.package-data]
+"nortex_motor.config" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]

@@ -1,0 +1,14 @@
+.env
+cache/
+data/
+salidas/
+*.parquet
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.ipynb_checkpoints/
