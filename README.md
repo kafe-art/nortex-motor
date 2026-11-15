@@ -20,6 +20,10 @@ dos juegos de ids que existen en el equipo (`precip_power` / `rain_power`).
 | `termico` | GDD con techo, días de calor en la etapa media, **noches frescas** y **Tmin media del invierno** para el mango | §9.2, §9.6 |
 | `escenarios` | Ventana de campaña en cada año histórico, P10/P50/P90 y **año análogo**; estratificable por años (p. ej. ICEN) | §6.2, §6.3 |
 | `simulacion` | Campaña completa y comparación de escenarios; arroz anegado como demanda + pérdidas | §14 |
+| `validacion` | Compara POWER con una estación (SENAMHI o NOAA), corrige Tmax/Tmin/lluvia **solo si la validación cruzada por año muestra mejora** y reescala ET0 | §19 |
+| `reservorio` | Volumen, % de capacidad útil, percentil frente a otros años y dotación análoga | D-17, EX-15 |
+| `hindcast` | ¿El rango P10–P90 habría contenido lo observado? Cobertura con IC de Wilson | §6.5 |
+| `pipeline` | `evaluar()`: elige la mejor fuente para cada insumo (laboratorio > SoilGrids; PCR > análoga; clima corregido > sin corregir), filtra escenarios por ICEN y registra la procedencia | §14 |
 
 Categorías de dato (enum único §6.1): `observado, modelado, pronosticado, escenario, simulado, declarado`.
 
@@ -65,6 +69,29 @@ como **degenerado (EX-13)** y usa la **anomalía de Tmin media**. Los inviernos 
 fueron 2026 (+3,6 °C), 1997 (+3,0 °C), 2023 (+2,8 °C) y 2015 (+1,6 °C), coincidentes con años
 El Niño.
 
+## Evaluación de punta a punta con datos reales
+
+```bash
+python scripts/demo_pipeline.py power_san_lorenzo_1991_2026.parquet <repo nortex-data>
+```
+
+Resultado (punto piloto, caupí 1-jun, 4 000 m³/ha, turnos de 14 días de ejemplo):
+
+| Validación con la estación NOAA de Piura (2016–2025, 2 891 días) | Antes | Después (validación cruzada) |
+| :-- | --: | --: |
+| Tmax: sesgo / MAE / r | +2,70 °C / 3,02 / 0,57 | 0,00 °C / 1,48 / 0,75 |
+| Tmin: sesgo / MAE / r | +0,52 °C / 1,17 / 0,87 | 0,01 °C / 1,01 / 0,87 |
+| Lluvia | no se corrige: solo 3 meses completos en la estación | |
+
+- POWER sobreestima Tmax hasta +4 °C entre mayo y noviembre; al corregir, ET0 baja ~15 % y la
+  cobertura hídrica pasa de 0,51–0,58 a **0,62–0,74**.
+- **Hindcast:** 21 de 26 años dentro de P10–P90 (81 %, IC95 62–91 %) → calibrado.
+- Advertencias automáticas: suelo de SoilGrids, volumen del reservorio de 2022 (dato antiguo),
+  parámetros por validar.
+- La estación está a 33 km, en el aeropuerto: parte de la diferencia puede ser real y no
+  error de POWER. Con estaciones SENAMHI del valle (Chulucanas, Partidor) la corrección sería
+  más representativa: basta pasar su serie en `estacion=`.
+
 ## Limitaciones (declaradas)
 
 - Parámetros de cultivo **POR VALIDAR**: rangos de FAO-56, Maas–Hoffman y la v0.7, sin fichas INIA.
@@ -76,8 +103,8 @@ El Niño.
   Es una propuesta: el equipo debe confirmarla frente a §6.2.
 - POWER sobreestima Tmax (~+2,6 °C frente al aeropuerto de Piura), lo que eleva ET0.
 - Escenarios: no son pronósticos ni llevan probabilidad.
-- **Pendiente:** motor de evaluación F1/F2 (cuatro dimensiones), datos de reservorio/PCR, ICEN
-  para estratificar y hindcast (§6.5).
+- **Pendiente:** motor de evaluación F1/F2 (cuatro dimensiones) y datos reales de PCR, turnos y
+  serie histórica del reservorio.
 
 ## Pruebas
 
