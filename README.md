@@ -23,7 +23,8 @@ dos juegos de ids que existen en el equipo (`precip_power` / `rain_power`).
 | `validacion` | Compara POWER con una estación (SENAMHI o NOAA), corrige Tmax/Tmin/lluvia **solo si la validación cruzada por año muestra mejora** y reescala ET0 | §19 |
 | `reservorio` | Volumen, % de capacidad útil, percentil frente a otros años y dotación análoga | D-17, EX-15 |
 | `hindcast` | ¿El rango P10–P90 habría contenido lo observado? Cobertura con IC de Wilson | §6.5 |
-| `pipeline` | `evaluar()`: elige la mejor fuente para cada insumo (laboratorio > SoilGrids; PCR > análoga; clima corregido > sin corregir), filtra escenarios por ICEN y registra la procedencia | §14 |
+| `decision` | **F1** (`f1_ventanas`) y **F2** (`f2_cultivos`) con **cuatro dimensiones separadas**: viabilidad (RT-06, RT-08, salinidad, compromiso perenne), riesgo (factores con nivel y evidencia), conveniencia (margen ajustado por Ky de FAO-33 y salinidad, margen por m³) y fundamentación (procedencia de cada insumo y datos que faltan, RT-07). Sin índice compuesto: orden lexicográfico declarado | §3, §4, §14 |
+| `pipeline` | `preparar()` + `evaluar_ctx()` (o el atajo `evaluar()`): elige la mejor fuente para cada insumo (laboratorio > SoilGrids; PCR > análoga; clima corregido > sin corregir), filtra escenarios por ICEN y registra la procedencia | §14 |
 
 Categorías de dato (enum único §6.1): `observado, modelado, pronosticado, escenario, simulado, declarado`.
 
@@ -92,6 +93,26 @@ Resultado (punto piloto, caupí 1-jun, 4 000 m³/ha, turnos de 14 días de ejemp
   error de POWER. Con estaciones SENAMHI del valle (Chulucanas, Partidor) la corrección sería
   más representativa: basta pasar su serie en `estacion=`.
 
+## F1 y F2 con datos reales
+
+```bash
+python scripts/demo_f1_f2.py power_san_lorenzo_1991_2026.parquet <repo nortex-data>
+```
+
+Con dotaciones y turnos **de ejemplo** (PCR real pendiente), riego por gravedad (Ea 0,5):
+
+- **F1, caupí:** todas las ventanas de mayo a octubre de 2027 salen «no viable» (cobertura 53–65 %).
+  Las de fin de mayo y junio tienen menos demanda y menos estrés.
+- **F2, 1 de enero de 2027 tras dos campañas de arroz:** ningún cultivo alcanza con esas
+  dotaciones. Riesgos altos por El Niño Costero (ICEN +4,50; en años análogos la lluvia de la
+  campaña llegó a 1 077–1 350 mm) y por invierno cálido para el mango (+1,4 °C). Reglas RT-02,
+  RT-04 y RT-05 activadas según el historial.
+- **Sensibilidad:** con riego por goteo (Ea 0,9) y la misma agua, caupí y maíz pasan a «viable»
+  (cobertura 112–118 %); el mango sigue en 54–56 %.
+- **Calibración pendiente:** el motor estima 28 700 m³/ha brutos para mango (ETc 1 529 mm, ET0 anual
+  2 184 mm), muy por encima de los 6 000–9 000 m³/ha de la v0.7. Hay que validar el Kc del mango
+  (riego deficitario en invierno, dosel incompleto) y la ET0 anual con INIA o la Junta.
+
 ## Limitaciones (declaradas)
 
 - Parámetros de cultivo **POR VALIDAR**: rangos de FAO-56, Maas–Hoffman y la v0.7, sin fichas INIA.
@@ -103,8 +124,8 @@ Resultado (punto piloto, caupí 1-jun, 4 000 m³/ha, turnos de 14 días de ejemp
   Es una propuesta: el equipo debe confirmarla frente a §6.2.
 - POWER sobreestima Tmax (~+2,6 °C frente al aeropuerto de Piura), lo que eleva ET0.
 - Escenarios: no son pronósticos ni llevan probabilidad.
-- **Pendiente:** motor de evaluación F1/F2 (cuatro dimensiones) y datos reales de PCR, turnos y
-  serie histórica del reservorio.
+- **Pendiente:** datos reales de PCR, turnos, economía de Piura y serie histórica del reservorio;
+  calibrar Kc de perennes; F3 (seguimiento con Sentinel-2/ECOSTRESS).
 
 ## Pruebas
 
