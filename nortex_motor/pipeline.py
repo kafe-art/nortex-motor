@@ -115,9 +115,23 @@ def _clasificar_enso(enso, inicio, dias, anios):
     return clases, ultimo
 
 
-def evaluar(
-    cultivo_id: str,
-    inicio: str | pd.Timestamp,
+@dataclass
+class Contexto:
+    """Datos preparados una sola vez para evaluar varios cultivos o ventanas (F1/F2)."""
+
+    clima: pd.DataFrame
+    validacion: dict | None
+    local: pd.DataFrame | None
+    suelo_datos: pd.DataFrame | None
+    enso: pd.DataFrame | None
+    reservorios: pd.DataFrame | None
+    estado_reservorio: dict | None
+    fecha_consulta: pd.Timestamp
+    procedencia: dict
+    advertencias: list[str]
+
+
+def preparar(
     clima: pd.DataFrame,
     *,
     estacion: pd.DataFrame | None = None,
@@ -126,21 +140,12 @@ def evaluar(
     local: pd.DataFrame | None = None,
     enso: pd.DataFrame | None = None,
     reservorios: pd.DataFrame | None = None,
-    area_ha: float = 1.0,
-    intervalo_dias: int | None = None,
-    dotacion_m3_ha: float | None = None,
-    eficiencia: float | None = None,
-    condicion_enso: str | None = None,
-    metrica: str = "deficit",
     fecha_consulta: str | pd.Timestamp | None = None,
-) -> Evaluacion:
-    """Evalúa un cultivo y una fecha de siembra con todas las fuentes disponibles."""
-    c = get_cultivo(cultivo_id)
-    inicio = pd.Timestamp(inicio).normalize()
+) -> Contexto:
+    """Carga el clima, lo valida y corrige con la estación y resume el reservorio."""
     fecha_consulta = pd.Timestamp(fecha_consulta or pd.Timestamp.today()).normalize()
     adv: list[str] = []
     proc: dict[str, str] = {}
-
     tabla = desde_largo(clima) if "variable" in clima.columns else clima.copy()
     proc["clima"] = "NASA POWER diario (modelado, celda ~50 km)"
     validacion = None
@@ -152,8 +157,6 @@ def evaluar(
     else:
         adv.append("Sin estación de referencia: el clima no se valida ni se corrige (§19).")
 
-    suelo = _suelo(c, local, suelo_datos, adv, proc)
-
     estado_res = None
     if reservorios is not None and not reservorios.empty:
         serie = res.serie_volumen(reservorios)
@@ -164,6 +167,30 @@ def evaluar(
             if dias is not None and dias > MAX_ANTIGUEDAD_RESERVORIO:
                 adv.append(f"El último volumen del reservorio es de {estado_res['fecha_dato']} "
                            f"({dias} días): no describe la situación actual (RNF-03).")
+    return Contexto(tabla, validacion, local, suelo_datos, enso, reservorios, estado_res,
+                    fecha_consulta, proc, adv)
+
+
+def evaluar_ctx(
+    ctx: Contexto,
+    cultivo_id: str,
+    inicio: str | pd.Timestamp,
+    *,
+    area_ha: float = 1.0,
+    intervalo_dias: int | None = None,
+    dotacion_m3_ha: float | None = None,
+    eficiencia: float | None = None,
+    condicion_enso: str | None = None,
+    metrica: str = "deficit",
+) -> Evaluacion:
+    """Evalúa un cultivo y una fecha de siembra sobre un contexto ya preparado."""
+    c = get_cultivo(cultivo_id)
+    inicio = pd.Timestamp(inicio).normalize()
+    adv: list[str] = list(ctx.advertencias)
+    proc: dict[str, str] = dict(ctx.procedencia)
+    local, tabla, estado_res, reservorios = ctx.local, ctx.clima, ctx.estado_reservorio, ctx.reservorios
+
+    suelo = _suelo(c, local, ctx.suelo_datos, adv, proc)
 
     origen_dot = "parámetro"
     if dotacion_m3_ha is None:
@@ -213,9 +240,9 @@ def evaluar(
 
     dias = c.ciclo_dias or 365
     anios_filtro, info_enso = None, None
-    if enso is not None and not enso.empty:
+    if ctx.enso is not None and not ctx.enso.empty:
         anios = sorted(set(tabla.dropna().index.year))
-        clases, ultimo = _clasificar_enso(enso, inicio, dias, anios)
+        clases, ultimo = _clasificar_enso(ctx.enso, inicio, dias, anios)
         info_enso = {"icen_ultimo": ultimo, "clases": clases,
                      "anios_nino": sorted(a for a, k in clases.items() if k == "nino"),
                      "anios_nina": sorted(a for a, k in clases.items() if k == "nina")}
@@ -233,4 +260,31 @@ def evaluar(
     for r in out["resultados"].values():
         adv.extend(a for a in r.advertencias if a not in adv)
     return Evaluacion(cultivo_id, inicio, suelo, riego, out["resultados"], out["escenarios"],
-                      resumen(out["resultados"]), validacion, hc, estado_res, info_enso, proc, adv)
+                      resumen(out["resultados"]), ctx.validacion, hc, estado_res, info_enso, proc, adv)
+
+
+def evaluar(
+    cultivo_id: str,
+    inicio: str | pd.Timestamp,
+    clima: pd.DataFrame,
+    *,
+    estacion: pd.DataFrame | None = None,
+    nombre_estacion: str = "estación",
+    suelo_datos: pd.DataFrame | None = None,
+    local: pd.DataFrame | None = None,
+    enso: pd.DataFrame | None = None,
+    reservorios: pd.DataFrame | None = None,
+    area_ha: float = 1.0,
+    intervalo_dias: int | None = None,
+    dotacion_m3_ha: float | None = None,
+    eficiencia: float | None = None,
+    condicion_enso: str | None = None,
+    metrica: str = "deficit",
+    fecha_consulta: str | pd.Timestamp | None = None,
+) -> Evaluacion:
+    """Atajo: :func:`preparar` + :func:`evaluar_ctx` para un solo cultivo y fecha."""
+    ctx = preparar(clima, estacion=estacion, nombre_estacion=nombre_estacion, suelo_datos=suelo_datos,
+                   local=local, enso=enso, reservorios=reservorios, fecha_consulta=fecha_consulta)
+    return evaluar_ctx(ctx, cultivo_id, inicio, area_ha=area_ha, intervalo_dias=intervalo_dias,
+                       dotacion_m3_ha=dotacion_m3_ha, eficiencia=eficiencia,
+                       condicion_enso=condicion_enso, metrica=metrica)
